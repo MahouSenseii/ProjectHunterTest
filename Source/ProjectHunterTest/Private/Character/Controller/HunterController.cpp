@@ -312,8 +312,6 @@ void AHunterController::RunInteractionCheck()
 		break;
 
 	case EInteractionType::IT_TapOrHold:
-		// User held past threshold - transition to HOLD action
-		// THIS IS YOUR SMOOTH TRANSITION! ✨
 		if (!bHasInteractBeenReleased && DoOnce(MyDoOnce, false, false))
 		{
 			IInteractable::Execute_OnHoldInteractionStart(Interactable, this);
