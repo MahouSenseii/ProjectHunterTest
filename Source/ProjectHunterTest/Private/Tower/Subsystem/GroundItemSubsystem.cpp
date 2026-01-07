@@ -207,6 +207,18 @@ TArray<UItemInstance*> UGroundItemSubsystem::GetItemsInRadius(FVector Location, 
 	return ItemsInRange;
 }
 
+int32 UGroundItemSubsystem::GetInstanceID(UItemInstance* Item) const
+{
+	for (const TPair<int32, UItemInstance*>& Pair : GroundItems)
+	{
+		if (Pair.Value == Item)
+		{
+			return Pair.Key;
+		}
+	}
+	return -1;
+}
+
 void UGroundItemSubsystem::UpdateItemLocation(int32 ItemID, FVector NewLocation)
 {
 	if (UInstancedStaticMeshComponent** FoundISM = InstanceToComponent.Find(ItemID))

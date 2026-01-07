@@ -54,6 +54,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "World|Items")
 	TArray<UItemInstance*> GetItemsInRadius(FVector Location, float Radius);
 
+	/** Get item ID */
+	UFUNCTION(BlueprintPure, Category = "Ground Items")
+	int32 GetInstanceID(UItemInstance* Item) const;
+
 	/** Update visual location of item (doesn't affect item data) */
 	UFUNCTION(BlueprintCallable, Category = "World|Items")
 	void UpdateItemLocation(int32 ItemID, FVector NewLocation);

@@ -50,7 +50,7 @@ void AHunterBaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Initialization will happen in PossessedBy (server) or OnRep_PlayerState (client)
+	
 }
 
 void AHunterBaseCharacter::PossessedBy(AController* NewController)
@@ -62,6 +62,9 @@ void AHunterBaseCharacter::PossessedBy(AController* NewController)
 	{
 		InitializeAbilitySystem();
 	}
+
+	
+	
 }
 
 void AHunterBaseCharacter::OnRep_PlayerState()
