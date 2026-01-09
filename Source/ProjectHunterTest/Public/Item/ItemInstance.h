@@ -43,7 +43,7 @@ public:
 	/** Random seed for deterministic generation */
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Item")
 	int32 Seed;
-
+	
 	// ═══════════════════════════════════════════════
 	// QUANTITY & WEIGHT 
 	// ═══════════════════════════════════════════════
@@ -55,7 +55,7 @@ public:
 	/** Total weight (base weight × quantity) - Hunter manga weight limit */
 	UPROPERTY(BlueprintReadOnly, Category = "Item")
 	float TotalWeight = 0.0f;
-
+	
 	// ═══════════════════════════════════════════════
 	// HUNTER MANGA PROPERTIES (Equipment)
 	// ═══════════════════════════════════════════════
@@ -326,6 +326,25 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Item|Consumable")
 	float GetCooldownProgress() const;
+
+	// ═══════════════════════════════════════════════
+	// SETTERS (For Loot System Integration)
+	// ═══════════════════════════════════════════════
+
+	/**
+	 * Set seed before initialization (for deterministic generation)
+	 * Must be called BEFORE Initialize()
+	 * @param InSeed - Seed value (0 = generate random)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void SetSeed(const int32 InSeed) { Seed = InSeed; }
+
+	/**
+	 * Set quantity (for stackable items)
+	 * @param InQuantity - Stack count
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void SetQuantity(const int32 InQuantity) { Quantity = InQuantity; };
 
 	/**
 	 * Reduce remaining uses

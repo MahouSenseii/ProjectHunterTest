@@ -3,31 +3,43 @@
 
 #include "CoreMinimal.h"
 #include "Item/Library/ItemEnums.h"
+#include "GroundItemPickupManager.generated.h"
 
-// Forward declarations
+class UGroundItemSubsystem;
 class UItemInstance;
 class UInventoryManager;
 class UEquipmentManager;
-class UGroundItemSubsystem;
 class AActor;
 class UWorld;
+
 DECLARE_LOG_CATEGORY_EXTERN(LogGroundItemPickupManager, Log, All);
+
 /**
  * Manages the logic for picking up ground items in the game.
  */
-class PROJECTHUNTERTEST_API FGroundItemPickupManager
+USTRUCT(BlueprintType)
+struct PROJECTHUNTERTEST_API FGroundItemPickupManager
 {
+	GENERATED_BODY()
+
 public:
 	FGroundItemPickupManager();
-	~FGroundItemPickupManager() = default;
 
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION
+	// CONFIGURATION (Blueprint-editable)
 	// ═══════════════════════════════════════════════
 
-	float PickupRadius;
-	float HoldToEquipDuration;
-	bool bShowEquipHint;
+	/** Maximum radius to pickup items */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
+	float PickupRadius = 500.0f;
+
+	/** How long to hold button to equip instead of pickup */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
+	float HoldToEquipDuration = 0.5f;
+
+	/** Show hint that holding will equip */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
+	bool bShowEquipHint = true;
 
 	// ═══════════════════════════════════════════════
 	// INITIALIZATION
@@ -88,23 +100,23 @@ public:
 
 private:
 	// ═══════════════════════════════════════════════
-	// CACHED REFERENCES
+	// CACHED REFERENCES (Not Blueprint-exposed)
 	// ═══════════════════════════════════════════════
 
-	AActor* OwnerActor;
-	UWorld* WorldContext;
-	UInventoryManager* CachedInventoryManager;
-	UEquipmentManager* CachedEquipmentManager;
-	UGroundItemSubsystem* CachedGroundItemSubsystem;
+	AActor* OwnerActor = nullptr;
+	UWorld* WorldContext = nullptr;
+	UInventoryManager* CachedInventoryManager = nullptr;
+	UEquipmentManager* CachedEquipmentManager = nullptr;
+	UGroundItemSubsystem* CachedGroundItemSubsystem = nullptr;
 
 	// ═══════════════════════════════════════════════
-	// HOLD STATE
+	// HOLD STATE (Not Blueprint-exposed)
 	// ═══════════════════════════════════════════════
 
-	bool bIsHoldingForGroundItem;
-	int32 CurrentHoldItemID;
-	float HoldElapsedTime;
-	float HoldProgress;
+	bool bIsHoldingForGroundItem = false;
+	int32 CurrentHoldItemID = -1;
+	float HoldElapsedTime = 0.0f;
+	float HoldProgress = 0.0f;
 
 	// ═══════════════════════════════════════════════
 	// INTERNAL LOGIC

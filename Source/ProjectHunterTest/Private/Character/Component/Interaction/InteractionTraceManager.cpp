@@ -9,6 +9,7 @@
 #include "GameFramework/Pawn.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/ALSPlayerCameraManager.h"
+#include "Character/Component/Interaction/InteractionDebugManager.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Engine/World.h"
 DEFINE_LOG_CATEGORY(LogInteractionTraceManager);
@@ -44,9 +45,16 @@ void FInteractionTraceManager::Initialize(AActor* Owner, UWorld* World)
 	UE_LOG(LogInteractionTraceManager, Log, TEXT("InteractionTraceManager: Initialized for %s"), *OwnerActor->GetName());
 }
 
+void FInteractionTraceManager::SetDebugManager(FInteractionDebugManager* InDebugManager)
+{
+	DebugManager = InDebugManager;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // PRIMARY FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════
+
+// Character/Component/InteractionTraceManager.cpp
 
 TScriptInterface<IInteractable> FInteractionTraceManager::TraceForActorInteractable()
 {
@@ -66,7 +74,23 @@ TScriptInterface<IInteractable> FInteractionTraceManager::TraceForActorInteracta
 
 	// Perform line trace
 	FHitResult HitResult;
-	if (!PerformLineTrace(TraceStart, TraceEnd, HitResult))
+	bool bHit = PerformLineTrace(TraceStart, TraceEnd, HitResult);
+    
+	// ═══════════════════════════════════════════════════════════════
+	// DEBUG VISUALIZATION - Draw immediately after trace
+	// ═══════════════════════════════════════════════════════════════
+	if (DebugManager)
+	{
+		DebugManager->DrawTraceLine(TraceStart, TraceEnd, bHit);
+        
+		if (bHit)
+		{
+			DebugManager->DrawHitPoint(HitResult.Location, HitResult.Normal);
+		}
+	}
+
+	// Early exit if no hit
+	if (!bHit)
 	{
 		return Result;
 	}

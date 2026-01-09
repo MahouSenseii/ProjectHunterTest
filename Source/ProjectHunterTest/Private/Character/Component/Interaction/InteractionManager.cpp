@@ -3,9 +3,16 @@
 #include "Character/Component/Interaction/InteractionManager.h"
 #include "Interactable/Interface/Interactable.h"
 #include "Interactable/Component/InteractableManager.h"
+#include "Tower/Subsystem/GroundItemSubsystem.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
+
 DEFINE_LOG_CATEGORY(LogInteractionManager);
+
+// ═══════════════════════════════════════════════════════════════════════
+// LIFECYCLE
+// ═══════════════════════════════════════════════════════════════════════
+
 UInteractionManager::UInteractionManager()
 {
 	PrimaryComponentTick.bCanEverTick = false; 
@@ -16,7 +23,10 @@ void UInteractionManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Check if we should even try to initialize
+	// ═══════════════════════════════════════════════
+	// EARLY VALIDATION
+	// ═══════════════════════════════════════════════
+
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	if (!OwnerPawn)
 	{
@@ -24,40 +34,33 @@ void UInteractionManager::BeginPlay()
 		return;
 	}
 
-	// Only initialize on locally controlled characters
-	if (!IsLocallyControlled())
+	// ═══════════════════════════════════════════════
+	// CHECK LOCAL CONTROL (Direct check, not delegated)
+	// ═══════════════════════════════════════════════
+	
+	// FIXED: Check locally controlled directly here instead of delegating
+	// to uninitialized TraceManager. We can't call IsLocallyControlled()
+	// because TraceManager.OwnerActor is still nullptr at this point.
+	if (!OwnerPawn->IsLocallyControlled())
 	{
-		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Initialized failed Not Locally Controlled"));
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Not locally controlled - skipping initialization"));
 		return;
 	}
 
-	// Initialize all sub-managers
-	InitializeSubManagers();
-
-
+	// ═══════════════════════════════════════════════
+	// INITIALIZE SYSTEM
+	// ═══════════════════════════════════════════════
 	
-
-	// Apply configuration from exposed properties
-	ApplyConfigurationToManagers();
-
-	// Start interaction check timer
-	if (bInteractionEnabled)
-	{
-		GetWorld()->GetTimerManager().SetTimer(
-			InteractionCheckTimer,
-			this,
-			&UInteractionManager::CheckForInteractables,
-			CheckFrequency,
-			true
-		);
-
-		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Initialized on %s (Frequency: %.2fs)"), 
-			*GetOwner()->GetName(), CheckFrequency);
-	}
-
-	UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Waiting for possession..."));
+	InitializeInteractionSystem();
 	
-	// Start checking for possession
+	// ═══════════════════════════════════════════════
+	// POSSESSION CHECK (Fallback for MP)
+	// ═══════════════════════════════════════════════
+	
+	// This handles edge cases in multiplayer where possession
+	// might not be fully established yet
+	UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Starting possession verification timer..."));
+	
 	GetWorld()->GetTimerManager().SetTimer(
 		PossessionCheckTimer,
 		this,
@@ -69,26 +72,25 @@ void UInteractionManager::BeginPlay()
 
 void UInteractionManager::Initialize()
 {
-	// Start interaction check timer
+	// Public initialization function (for manual setup if needed)
 	if (bInteractionEnabled)
 	{
 		GetWorld()->GetTimerManager().SetTimer(
 			InteractionCheckTimer,
 			this,
 			&UInteractionManager::CheckForInteractables,
-			CheckFrequency,
+			TraceManager.CheckFrequency,
 			true
 		);
 
-		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Initialized on %s (Frequency: %.2fs)"), 
-			*GetOwner()->GetName(), CheckFrequency);
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Manually initialized on %s (Frequency: %.2fs)"), 
+			*GetOwner()->GetName(), TraceManager.CheckFrequency);
 	}
 }
 
 void UInteractionManager::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
 }
 
 void UInteractionManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -98,6 +100,7 @@ void UInteractionManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		GetWorld()->GetTimerManager().ClearTimer(InteractionCheckTimer);
 		GetWorld()->GetTimerManager().ClearTimer(HoldProgressTimer);
+		GetWorld()->GetTimerManager().ClearTimer(PossessionCheckTimer);
 	}
 
 	// End focus on current interactable
@@ -132,7 +135,7 @@ void UInteractionManager::OnInteractPressed()
 		}
 	}
 
-	// PRIORITY 2: Ground items
+	// PRIORITY 2: Ground items (start hold interaction)
 	if (CurrentGroundItemID != -1)
 	{
 		// Start hold interaction
@@ -193,9 +196,24 @@ void UInteractionManager::PickupAllNearbyItems()
 
 void UInteractionManager::CheckForInteractables()
 {
+	// FIXED: Now TraceManager is properly initialized, so we can safely
+	// delegate to TraceManager.IsLocallyControlled()
 	if (!bInteractionEnabled || !IsLocallyControlled())
 	{
 		return;
+	}
+
+	// Get camera location for debug visualization
+	FVector CameraLocation;
+	FRotator CameraRotation;
+	TraceManager.GetCameraViewPoint(CameraLocation, CameraRotation);
+
+	// ═══════════════════════════════════════════════
+	// DEBUG: Draw interaction range sphere
+	// ═══════════════════════════════════════════════
+	if (bDebugEnabled)
+	{
+		DebugManager.DrawInteractionRange(CameraLocation, TraceManager.InteractionDistance);
 	}
 
 	// PRIORITY 1: Check for actor-based interactables
@@ -220,20 +238,38 @@ void UInteractionManager::CheckForInteractables()
 		CurrentGroundItemID = NewGroundItemID;
 	}
 
-	// Debug visualization
+	// ═══════════════════════════════════════════════
+	// DEBUG VISUALIZATION (NOW COMPLETE!)
+	// ═══════════════════════════════════════════════
 	if (bDebugEnabled)
 	{
 		UInteractableManager* InteractableComp = GetCurrentInteractable();
 		float Distance = 0.0f;
 		
+		// Calculate distance if we have an interactable
 		if (InteractableComp)
 		{
-			FVector CameraLoc;
-			FRotator CameraRot;
-			TraceManager.GetCameraViewPoint(CameraLoc, CameraRot);
-			Distance = FVector::Distance(CameraLoc, InteractableComp->GetOwner()->GetActorLocation());
+			Distance = FVector::Distance(CameraLocation, InteractableComp->GetOwner()->GetActorLocation());
+			
+			// ✅ NOW ACTUALLY CALLED: Draw detailed interactable info
+			DebugManager.DrawInteractableInfo(InteractableComp, Distance);
+		}
+		
+		// ✅ NOW ACTUALLY CALLED: Draw ground item visualization
+		if (CurrentGroundItemID != -1)
+		{
+			// Get ground item location from subsystem
+			if (UGroundItemSubsystem* Subsystem = GetWorld()->GetSubsystem<UGroundItemSubsystem>())
+			{
+				const TMap<int32, FVector>& Locations = Subsystem->GetInstanceLocations();
+				if (const FVector* LocationPtr = Locations.Find(CurrentGroundItemID))
+				{
+					DebugManager.DrawGroundItem(*LocationPtr, CurrentGroundItemID);
+				}
+			}
 		}
 
+		// Display on-screen debug text
 		DebugManager.DisplayInteractionState(InteractableComp, Distance, CurrentGroundItemID);
 	}
 }
@@ -264,8 +300,8 @@ void UInteractionManager::InitializeInteractionSystem()
 	// Initialize all sub-managers (lightweight!)
 	InitializeSubManagers();
 
-	// Apply configuration from exposed properties
-	ApplyConfigurationToManagers();
+	// Apply quick settings (debug mode)
+	ApplyQuickSettings();
 
 	// Start interaction check timer
 	if (bInteractionEnabled)
@@ -274,12 +310,12 @@ void UInteractionManager::InitializeInteractionSystem()
 			InteractionCheckTimer,
 			this,
 			&UInteractionManager::CheckForInteractables,
-			CheckFrequency,
+			TraceManager.CheckFrequency,
 			true
 		);
 
 		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: ✓ Initialized on %s (Frequency: %.2fs)"), 
-			*GetOwner()->GetName(), CheckFrequency);
+			*GetOwner()->GetName(), TraceManager.CheckFrequency);
 	}
 	
 	UE_LOG(LogInteractionManager, Log, TEXT("═══════════════════════════════════════════"));
@@ -294,16 +330,16 @@ void UInteractionManager::CheckPossessionAndInitialize()
 		return;
 	}
 
-	// Check if possessed now
+	// Check if possessed now (direct check again, not delegated)
 	if (OwnerPawn->IsLocallyControlled())
 	{
-		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Possession detected! Initializing..."));
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Possession confirmed!"));
 		
 		// Stop checking
 		GetWorld()->GetTimerManager().ClearTimer(PossessionCheckTimer);
 		
-		// Initialize system
-		InitializeInteractionSystem();
+		// Already initialized in BeginPlay, so we just confirm here
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: System already active"));
 	}
 }
 
@@ -324,26 +360,23 @@ void UInteractionManager::InitializeSubManagers()
 	PickupManager.Initialize(Owner, World);
 	DebugManager.Initialize(Owner, World);
 
+	// ✅ Connect debug manager to trace manager for trace visualization
+	TraceManager.SetDebugManager(&DebugManager);
+
 	UE_LOG(LogTemp, Log, TEXT("InteractionManager: All sub-managers initialized"));
 }
 
-void UInteractionManager::ApplyConfigurationToManagers()
+void UInteractionManager::ApplyQuickSettings()
 {
-	// Apply trace settings
-	TraceManager.InteractionDistance = InteractionDistance;
-	TraceManager.CheckFrequency = CheckFrequency;
-	TraceManager.bUseALSCameraOrigin = bUseALSCameraOrigin;
-
-	// Apply validation settings
-	ValidatorManager.LatencyBuffer = LatencyBuffer;
-	ValidatorManager.bUseDynamicLatencyBuffer = bUseDynamicLatencyBuffer;
-
-	// Apply pickup settings
-	PickupManager.PickupRadius = PickupRadius;
-	PickupManager.HoldToEquipDuration = HoldToEquipDuration;
-
-	// Apply debug settings
-	DebugManager.DebugMode = bDebugEnabled ? EInteractionDebugMode::Full : EInteractionDebugMode::None;
+	// Apply quick-access debug setting to DebugManager
+	if (bDebugEnabled)
+	{
+		DebugManager.DebugMode = EInteractionDebugMode::Full;
+	}
+	else
+	{
+		DebugManager.DebugMode = EInteractionDebugMode::None;
+	}
 }
 
 void UInteractionManager::InteractWithActor(AActor* TargetActor)
@@ -365,7 +398,7 @@ void UInteractionManager::InteractWithActor(AActor* TargetActor)
 	// Validate interaction (server-side)
 	if (ValidatorManager.HasAuthority())
 	{
-		if (!ValidatorManager.ValidateActorInteraction(TargetActor, ClientLocation, InteractionDistance))
+		if (!ValidatorManager.ValidateActorInteraction(TargetActor, ClientLocation, TraceManager.InteractionDistance))
 		{
 			UE_LOG(LogInteractionManager, Warning, TEXT("InteractionManager: Actor interaction failed validation"));
 			

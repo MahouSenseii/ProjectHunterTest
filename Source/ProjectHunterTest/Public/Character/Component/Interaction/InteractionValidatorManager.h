@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "InteractionValidatorManager.generated.h"
 
 // Forward declarations
 class IInteractable;
@@ -9,39 +10,49 @@ class UInteractableManager;
 class UGroundItemSubsystem;
 class AActor;
 class UWorld;
+
 DECLARE_LOG_CATEGORY_EXTERN(LogInteractionValidatorManager, Log, All);
+
 /**
  * Manages the lifecycle and validation of interaction-related objects.
  * Responsible for ensuring interactions adhere to specific rules
  * and constraints across different contexts.
  */
-class PROJECTHUNTERTEST_API FInteractionValidatorManager
+USTRUCT(BlueprintType)
+struct PROJECTHUNTERTEST_API FInteractionValidatorManager
 {
+	GENERATED_BODY()
+	
 public:
 	FInteractionValidatorManager();
-	~FInteractionValidatorManager() = default;
 
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION
+	// CONFIGURATION (Blueprint-editable)
 	// ═══════════════════════════════════════════════
 
 	/** Additional distance buffer for network latency/lag compensation */
-	float LatencyBuffer;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation")
+	float LatencyBuffer = 50.0f;
 
 	/** Use dynamic latency buffer based on player ping */
-	bool bUseDynamicLatencyBuffer;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation")
+	bool bUseDynamicLatencyBuffer = true;
 
 	/** Minimum latency buffer (ms to units) */
-	float MinLatencyBuffer;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation")
+	float MinLatencyBuffer = 50.0f;
 
 	/** Maximum latency buffer (ms to units) */
-	float MaxLatencyBuffer;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation")
+	float MaxLatencyBuffer = 200.0f;
 
 	/** Require line of sight for actor interactions */
-	bool bRequireLineOfSight;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation")
+	bool bRequireLineOfSight = false;
 
 	/** Log validation failures for anti-cheat monitoring */
-	bool bLogValidationFailures;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation")
+	bool bLogValidationFailures = true;
 
 	// ═══════════════════════════════════════════════
 	// INITIALIZATION
@@ -105,16 +116,16 @@ public:
 
 private:
 	// ═══════════════════════════════════════════════
-	// CACHED REFERENCES
+	// CACHED REFERENCES (Not Blueprint-exposed)
 	// ═══════════════════════════════════════════════
 
-	AActor* OwnerActor;
-	UWorld* WorldContext;
-	UGroundItemSubsystem* CachedGroundItemSubsystem;
+	AActor* OwnerActor = nullptr;
+	UWorld* WorldContext = nullptr;
+	UGroundItemSubsystem* CachedGroundItemSubsystem = nullptr;
 
 	// Anti-cheat tracking
-	int32 ValidationFailureCount;
-	float LastValidationFailureTime;
+	int32 ValidationFailureCount = 0;
+	float LastValidationFailureTime = 0.0f;
 
 	// ═══════════════════════════════════════════════
 	// INTERNAL HELPERS

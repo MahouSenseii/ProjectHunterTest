@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "Character/Component/Library/InteractionDebugEnumLibrary.h"
+#include "InteractionDebugManager.generated.h"
 
 // Forward declarations
 class UInteractableManager;
@@ -16,30 +17,65 @@ DECLARE_LOG_CATEGORY_EXTERN(LogInteractionDebugManager, Log, All);
  * A manager class for handling interaction debugging functionality.
  * Manages the display and control of debug data to aid in development and testing.
  */
-class PROJECTHUNTERTEST_API FInteractionDebugManager
+USTRUCT(BlueprintType)
+struct PROJECTHUNTERTEST_API FInteractionDebugManager
 {
+	GENERATED_BODY()
+	
 public:
 	FInteractionDebugManager();
-	~FInteractionDebugManager() = default;
 
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION
+	// CONFIGURATION (Blueprint-editable)
 	// ═══════════════════════════════════════════════
 
-	EInteractionDebugMode DebugMode;
-	bool bDrawTraceLines;
-	bool bDrawHitPoints;
-	bool bDrawInteractionRange;
-	bool bDrawGroundItems;
-	bool bShowDebugText;
+	/** Debug visualization mode */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	EInteractionDebugMode DebugMode = EInteractionDebugMode::None;
 
-	FColor TraceHitColor;
-	FColor TraceMissColor;
-	FColor InteractableColor;
-	FColor GroundItemColor;
+	/** Draw trace lines */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Visualization")
+	bool bDrawTraceLines = true;
 
-	float DrawDuration; // 0 = single frame
-	float DrawThickness;
+	/** Draw hit points */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Visualization")
+	bool bDrawHitPoints = true;
+
+	/** Draw interaction range sphere */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Visualization")
+	bool bDrawInteractionRange = true;
+
+	/** Draw ground items */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Visualization")
+	bool bDrawGroundItems = true;
+
+	/** Show on-screen debug text */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Visualization")
+	bool bShowDebugText = true;
+
+	/** Color for successful trace hits */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Colors")
+	FColor TraceHitColor = FColor::Green;
+
+	/** Color for trace misses */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Colors")
+	FColor TraceMissColor = FColor::Red;
+
+	/** Color for interactable objects */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Colors")
+	FColor InteractableColor = FColor::Cyan;
+
+	/** Color for ground items */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Colors")
+	FColor GroundItemColor = FColor::Yellow;
+
+	/** How long to display debug shapes (0 = single frame) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Display")
+	float DrawDuration = 0.0f;
+
+	/** Thickness of debug lines */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug|Display")
+	float DrawThickness = 2.0f;
 
 	// ═══════════════════════════════════════════════
 	// INITIALIZATION
@@ -89,15 +125,19 @@ public:
 	bool ShouldShowDebugTraces() const;
 
 private:
-	AActor* OwnerActor;
-	UWorld* WorldContext;
-	UALSDebugComponent* CachedALSDebugComponent;
+	// ═══════════════════════════════════════════════
+	// CACHED REFERENCES (Not Blueprint-exposed)
+	// ═══════════════════════════════════════════════
 
-	// Debug statistics
-	int32 TotalInteractions;
-	int32 SuccessfulInteractions;
-	int32 FailedInteractions;
-	int32 TotalGroundItemsPickedUp;
-	float AverageTraceTime;
-	float AverageValidationTime;
+	AActor* OwnerActor = nullptr;
+	UWorld* WorldContext = nullptr;
+	UALSDebugComponent* CachedALSDebugComponent = nullptr;
+
+	// Debug statistics (Not Blueprint-exposed)
+	int32 TotalInteractions = 0;
+	int32 SuccessfulInteractions = 0;
+	int32 FailedInteractions = 0;
+	int32 TotalGroundItemsPickedUp = 0;
+	float AverageTraceTime = 0.0f;
+	float AverageValidationTime = 0.0f;
 };

@@ -25,6 +25,11 @@ enum class EItemType : uint8
 	IT_Key          UMETA(DisplayName = "Key"),
 };
 
+FORCEINLINE bool IsValidItemType(const EItemType Type)
+{
+	return Type != EItemType::IT_None;
+}
+
 /**
  * Item Sub-Types (Weapons, Armor pieces, etc.)
  */
@@ -63,7 +68,13 @@ enum class EItemSubType : uint8
 	IST_Potion          UMETA(DisplayName = "Potion"),
 	IST_Scroll          UMETA(DisplayName = "Scroll"),
 	IST_Food            UMETA(DisplayName = "Food"),
+	
 };
+
+FORCEINLINE bool IsValidItemSubType(const EItemSubType SubType)
+{
+	return SubType != EItemSubType::IST_None;
+}
 
 /**
  * Item Rarity Grades - Solo Leveling / ORV Style (F-SS Grade System)

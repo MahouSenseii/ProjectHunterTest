@@ -14,34 +14,17 @@
 // Forward declarations
 class IInteractable;
 class UInteractableManager;
+
 DECLARE_LOG_CATEGORY_EXTERN(LogInteractionManager, Log, All);
+
 /**
  * Delegates
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCurrentInteractableChanged, UInteractableManager*, NewInteractable);
 
 /**
- * Interaction Manager (Lightweight Coordinator)
- * 
- * ONLY UACTORCOMPONENT IN THE SYSTEM!
- * 
- * SINGLE RESPONSIBILITY: Coordinate lightweight interaction managers
- * - Owns all sub-managers (as member variables, NOT components!)
- * - Manages current interactable state
- * - Routes input to appropriate handlers
- * - Provides unified interface
- * 
- * SUB-MANAGERS (Plain C++ classes):
- * - FInteractionTraceManager (~80 bytes)
- * - FInteractionValidatorManager (~64 bytes)
- * - FGroundItemPickupManager (~72 bytes)
- * - FInteractionDebugManager (~96 bytes)
- * 
- * TOTAL OVERHEAD: ~312 bytes for all managers
- *   vs OLD: ~800 bytes for single monolithic component
- *   vs PREVIOUS REFACTOR: ~1200 bytes (5 separate components)
- * 
- * PERFORMANCE: ✅ Best cache locality, minimal indirection
+ * Represents a manager component for handling interaction systems, including
+ * tracing, validation, pickup, debugging, and state tracking for nearby interactables.
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PROJECTHUNTERTEST_API UInteractionManager : public UActorComponent
@@ -49,6 +32,10 @@ class PROJECTHUNTERTEST_API UInteractionManager : public UActorComponent
 	GENERATED_BODY()
 
 public:
+	// ═══════════════════════════════════════════════
+	// LIFECYCLE
+	// ═══════════════════════════════════════════════
+
 	UInteractionManager();
 
 	virtual void BeginPlay() override;
@@ -60,39 +47,35 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION (Exposed to Blueprint)
+	// CONFIGURATION - Sub-Managers (Blueprint-editable!)
 	// ═══════════════════════════════════════════════
 
 	/** Enable interaction system */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Setup")
 	bool bInteractionEnabled = true;
 
-	// Trace settings
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Trace")
-	float InteractionDistance = 300.0f;
+	/** Trace Manager - Expand to configure trace settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
+	FInteractionTraceManager TraceManager;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Trace")
-	float CheckFrequency = 0.1f;
+	/** Validator Manager - Expand to configure validation settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
+	FInteractionValidatorManager ValidatorManager;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Trace")
-	bool bUseALSCameraOrigin = true;
+	/** Pickup Manager - Expand to configure pickup settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
+	FGroundItemPickupManager PickupManager;
 
-	// Validation settings
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Validation")
-	float LatencyBuffer = 50.0f;
+	/** Debug Manager - Expand to configure debug settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
+	FInteractionDebugManager DebugManager;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Validation")
-	bool bUseDynamicLatencyBuffer = true;
+	// ═══════════════════════════════════════════════
+	// QUICK ACCESS SETTINGS (Optional convenience)
+	// ═══════════════════════════════════════════════
 
-	// Pickup settings
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Pickup")
-	float PickupRadius = 500.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Pickup")
-	float HoldToEquipDuration = 0.5f;
-
-	// Debug settings
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Debug")
+	/** Quick toggle for debug visualization (also in DebugManager) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Quick Settings")
 	bool bDebugEnabled = false;
 
 	// ═══════════════════════════════════════════════
@@ -152,6 +135,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	int32 GetCurrentGroundItemID() const { return CurrentGroundItemID; }
 
+	/**
+	 * Check if locally controlled (safe to call after initialization)
+	 * 
+	 * NOTE: This delegates to TraceManager, which must be initialized first.
+	 *       In BeginPlay(), we check locally controlled status directly
+	 *       on the Pawn before sub-managers are initialized.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	bool IsLocallyControlled() const { return TraceManager.IsLocallyControlled(); }
 
@@ -164,35 +154,26 @@ public:
 
 protected:
 	// ═══════════════════════════════════════════════
-	// SUB-MANAGERS (Lightweight, stack-allocated!)
-	// ═══════════════════════════════════════════════
-
-	FInteractionTraceManager TraceManager;
-	FInteractionValidatorManager ValidatorManager;
-	FGroundItemPickupManager PickupManager;
-	FInteractionDebugManager DebugManager;
-	
-	// ═══════════════════════════════════════════════
 	// INITIALIZATION
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Initialize the interaction system (called after possession)
+	 * Initialize the interaction system (called after possession check)
 	 */
 	void InitializeInteractionSystem();
 
 	/**
-	 * Check if possessed and initialize if ready
+	 * Check if possessed and confirm initialization
+	 * (Fallback for multiplayer edge cases)
 	 */
 	void CheckPossessionAndInitialize();
-
 
 	// ═══════════════════════════════════════════════
 	// INTERNAL LOGIC
 	// ═══════════════════════════════════════════════
 
 	void InitializeSubManagers();
-	void ApplyConfigurationToManagers();
+	void ApplyQuickSettings();
 	void InteractWithActor(AActor* TargetActor);
 	void PickupGroundItemToInventory(int32 ItemID);
 	void PickupGroundItemAndEquip(int32 ItemID);
@@ -202,6 +183,10 @@ protected:
 	void UpdateHoldProgress();
 
 private:
+	// ═══════════════════════════════════════════════
+	// TIMERS
+	// ═══════════════════════════════════════════════
+
 	FTimerHandle InteractionCheckTimer;
 	FTimerHandle HoldProgressTimer;
 	FTimerHandle PossessionCheckTimer;
