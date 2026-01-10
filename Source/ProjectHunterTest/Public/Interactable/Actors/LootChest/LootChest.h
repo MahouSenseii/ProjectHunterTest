@@ -9,6 +9,8 @@
 // Forward declarations
 class UInteractableManager;
 class UStaticMeshComponent;
+class USkeletalMeshComponent;
+class UAnimSequence;
 class UItemInstance;
 class ULootComponent;
 class ULootSubsystem;
@@ -32,6 +34,7 @@ enum class EChestState : uint8
 	CS_Opening    UMETA(DisplayName = "Opening"),
 	CS_Open       UMETA(DisplayName = "Open"),
 	CS_Looted     UMETA(DisplayName = "Looted"),
+	CS_Closing    UMETA(DisplayName = "Closing"),
 	CS_Respawning UMETA(DisplayName = "Respawning")
 };
 
@@ -48,21 +51,41 @@ struct FChestVisualConfig
 {
 	GENERATED_BODY()
 
-	/** Use static mesh or SkeletalMesh */ 
+	// ─────────────────────────────────────────────
+	// MESH TYPE SELECTION
+	// ─────────────────────────────────────────────
+
+	/** Use static mesh (true) or skeletal mesh (false) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
 	bool bUseStaticMesh = true;
 
-	/** Mesh when closed */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals" , meta = (EditCondition = "bUseStaticMesh"))
+	// ─────────────────────────────────────────────
+	// STATIC MESH OPTIONS (shown when bUseStaticMesh = true)
+	// ─────────────────────────────────────────────
+
+	/** Static mesh when closed */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals|Static Mesh", 
+		meta = (EditCondition = "bUseStaticMesh", EditConditionHides))
 	UStaticMesh* ClosedMesh = nullptr;
 
-	/** Mesh when open */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals", meta = (EditCondition = "bUseStaticMesh"))
+	/** Static mesh when open */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals|Static Mesh", 
+		meta = (EditCondition = "bUseStaticMesh", EditConditionHides))
 	UStaticMesh* OpenMesh = nullptr;
 
+	// ─────────────────────────────────────────────
+	// SKELETAL MESH OPTIONS (shown when bUseStaticMesh = false)
+	// ─────────────────────────────────────────────
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals", meta = (EditCondition = "!bUseStaticMesh"))
+	/** Skeletal mesh (animated) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals|Skeletal Mesh", 
+		meta = (EditCondition = "!bUseStaticMesh", EditConditionHides))
 	USkeletalMesh* SkeletalMesh = nullptr;
+
+	/** Open animation sequence (plays forward to open, reverse to close) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals|Skeletal Mesh", 
+		meta = (EditCondition = "!bUseStaticMesh", EditConditionHides))
+	UAnimSequence* OpenAnimation = nullptr;
 };
 
 /**
@@ -78,9 +101,18 @@ struct FChestAnimationConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
 	bool bPlayOpenAnimation = true;
 
-	/** Open animation duration */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation", meta = (EditCondition = "bPlayOpenAnimation", ClampMin = "0.1"))
+	/** 
+	 * Open animation duration (for static mesh timing)
+	 * NOTE: For skeletal mesh, this is overridden by the actual animation length
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation", 
+		meta = (EditCondition = "bPlayOpenAnimation", ClampMin = "0.1"))
 	float OpenAnimationDuration = 0.5f;
+
+	/** Playback rate multiplier for skeletal mesh animation */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation", 
+		meta = (EditCondition = "bPlayOpenAnimation", ClampMin = "0.1", ClampMax = "5.0"))
+	float AnimationPlayRate = 1.0f;
 };
 
 /**
@@ -95,6 +127,10 @@ struct FChestFeedbackConfig
 	/** Sound when opened */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	USoundBase* OpenSound = nullptr;
+
+	/** Sound when closed/reset (optional) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	USoundBase* CloseSound = nullptr;
 
 	/** Niagara effect when opened */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
@@ -115,12 +151,19 @@ struct FChestRespawnConfig
 	bool bCanRespawn = false;
 
 	/** Time until respawn (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", meta = (EditCondition = "bCanRespawn", ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", 
+		meta = (EditCondition = "bCanRespawn", ClampMin = "0.0"))
 	float RespawnTime = 300.0f;
 
 	/** Re-roll loot on respawn? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", meta = (EditCondition = "bCanRespawn"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", 
+		meta = (EditCondition = "bCanRespawn"))
 	bool bRerollLootOnRespawn = true;
+
+	/** Play close animation before respawn completes? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", 
+		meta = (EditCondition = "bCanRespawn"))
+	bool bPlayCloseAnimationOnRespawn = true;
 };
 
 /**
@@ -166,7 +209,8 @@ struct FChestSpawnConfig
  * SINGLE RESPONSIBILITY: Coordinate chest behavior and delegate concerns
  * 
  * DESIGN:
- * - State machine (Closed → Opening → Open → Looted → Respawning)
+ * - State machine (Closed → Opening → Open → Looted → Closing → Respawning)
+ * - Supports both static mesh (swap) and skeletal mesh (animated) visuals
  * - Delegates loot generation to ULootComponent
  * - Uses split config structs for clean organization
  * - Timer-based animation (no wasteful tick)
@@ -175,8 +219,9 @@ struct FChestSpawnConfig
  * USAGE:
  *   1. Place chest in level
  *   2. Configure LootComponent.SourceID (e.g., "Chest_Common")
- *   3. Configure visual, animation, feedback settings
- *   4. Player interacts → loot generates and spawns
+ *   3. Choose mesh type (static or skeletal) in VisualConfig
+ *   4. Configure animation, feedback, respawn settings
+ *   5. Player interacts → loot generates and spawns
  */
 UCLASS()
 class PROJECTHUNTERTEST_API ALootChest : public AActor
@@ -197,10 +242,11 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USceneComponent* RootSceneComponent;
 
-	/** Chest mesh */
+	/** Static chest mesh (visible when bUseStaticMesh = true) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UStaticMeshComponent* Static_ChestMesh;
 
+	/** Skeletal chest mesh (visible when bUseStaticMesh = false) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USkeletalMeshComponent* Skeletal_ChestMesh;
 
@@ -295,7 +341,7 @@ public:
 	void OpenChest(AActor* Opener);
 
 	/**
-	 * Reset chest to closed state
+	 * Reset chest to closed state (plays reverse animation if skeletal)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Loot Chest")
 	void ResetChest();
@@ -322,6 +368,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Loot Chest")
 	bool IsSourceValid() const;
 
+	UFUNCTION(BlueprintPure, Category = "Loot Chest")
+	bool IsUsingSkeletalMesh() const { return !VisualConfig.bUseStaticMesh; }
+
 	// ═══════════════════════════════════════════════
 	// NETWORKING
 	// ═══════════════════════════════════════════════
@@ -339,6 +388,9 @@ protected:
 	void SetupInteraction();
 	void SetupVisuals();
 	void SetupLootComponent();
+
+	/** Configure mesh component visibility based on bUseStaticMesh */
+	void ConfigureMeshVisibility();
 
 	// ═══════════════════════════════════════════════
 	// INTERACTION CALLBACKS
@@ -359,32 +411,47 @@ protected:
 	// LOOT (Delegates to LootComponent)
 	// ═══════════════════════════════════════════════
 
-	/**
-	 * Get player stats for loot generation
-	 * @param Player - Player actor
-	 * @param OutLuck - Player's luck stat
-	 * @param OutMagicFind - Player's magic find stat
-	 */
 	void GetPlayerLootStats(AActor* Player, float& OutLuck, float& OutMagicFind) const;
-
-	/**
-	 * Generate and spawn loot using LootComponent
-	 * @param Opener - Who opened the chest
-	 */
 	void GenerateAndSpawnLoot(AActor* Opener);
 
 	// ═══════════════════════════════════════════════
 	// ANIMATION (Timer-based, not Tick-based)
 	// ═══════════════════════════════════════════════
 
+	/** Start open animation (forward for skeletal, timer for static) */
 	void StartOpenAnimation();
+
+	/** Called when open animation completes */
 	void OnOpenAnimationComplete();
+
+	/** Start close animation (reverse for skeletal, timer for static) */
+	void StartCloseAnimation();
+
+	/** Called when close animation completes */
+	void OnCloseAnimationComplete();
+
+	/** Get the effective animation duration */
+	float GetAnimationDuration() const;
+
+	// ─────────────────────────────────────────────
+	// SKELETAL MESH ANIMATION HELPERS
+	// ─────────────────────────────────────────────
+
+	/** Play skeletal mesh animation in specified direction */
+	void PlaySkeletalAnimation(bool bReverse);
+
+	/** Stop any playing skeletal animation */
+	void StopSkeletalAnimation();
+
+	/** Set skeletal mesh to specific animation position (0.0 = closed, 1.0 = open) */
+	void SetSkeletalAnimationPosition(float NormalizedPosition);
 
 	// ═══════════════════════════════════════════════
 	// VISUAL/AUDIO FEEDBACK
 	// ═══════════════════════════════════════════════
 
 	void PlayOpenSound();
+	void PlayCloseSound();
 	void PlayOpenVFX();
 
 	// ═══════════════════════════════════════════════
@@ -399,5 +466,6 @@ protected:
 	// ═══════════════════════════════════════════════
 
 	FTimerHandle OpenAnimationTimer;
+	FTimerHandle CloseAnimationTimer;
 	FTimerHandle RespawnTimer;
 };

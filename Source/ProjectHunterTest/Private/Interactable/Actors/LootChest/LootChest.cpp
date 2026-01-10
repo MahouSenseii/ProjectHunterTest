@@ -7,6 +7,9 @@
 #include "Character/Component/StatsManager.h"
 #include "Item/ItemInstance.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/AnimSingleNodeInstance.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Net/UnrealNetwork.h"
@@ -29,21 +32,22 @@ ALootChest::ALootChest()
 	RootSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootScene"));
 	RootComponent = RootSceneComponent;
 
-	// Create chest mesh
-	Static_ChestMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ChestMesh"));
+	// Create static chest mesh
+	Static_ChestMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StaticChestMesh"));
 	Static_ChestMesh->SetupAttachment(RootComponent);
 	Static_ChestMesh->SetCollisionProfileName(TEXT("BlockAll"));
 
-
-	// Create chest mesh
-	Skeletal_ChestMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ChestMesh"));
+	// Create skeletal chest mesh
+	Skeletal_ChestMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("SkeletalChestMesh"));
 	Skeletal_ChestMesh->SetupAttachment(RootComponent);
 	Skeletal_ChestMesh->SetCollisionProfileName(TEXT("BlockAll"));
+	// Use single node instance for direct animation control
+	Skeletal_ChestMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 
 	// Create interaction component
 	InteractableManager = CreateDefaultSubobject<UInteractableManager>(TEXT("InteractableManager"));
 
-	// Create loot component (handles all loot generation/spawning)
+	// Create loot component
 	LootComponent = CreateDefaultSubobject<ULootComponent>(TEXT("LootComponent"));
 
 	// Initialize state
@@ -59,6 +63,9 @@ void ALootChest::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Configure mesh visibility based on type selection
+	ConfigureMeshVisibility();
+
 	// Setup components
 	SetupInteraction();
 	SetupVisuals();
@@ -71,13 +78,61 @@ void ALootChest::BeginPlay()
 			*GetName(), *LootComponent->SourceID.ToString());
 	}
 
-	UE_LOG(LogLootChest, Log, TEXT("%s: Initialized with source '%s'"),
-		*GetName(), *LootComponent->SourceID.ToString());
+	UE_LOG(LogLootChest, Log, TEXT("%s: Initialized with source '%s' (MeshType: %s)"),
+		*GetName(), 
+		*LootComponent->SourceID.ToString(),
+		VisualConfig.bUseStaticMesh ? TEXT("Static") : TEXT("Skeletal"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════
+
+void ALootChest::ConfigureMeshVisibility()
+{
+	if (VisualConfig.bUseStaticMesh)
+	{
+		// Static mesh mode
+		if (Static_ChestMesh)
+		{
+			Static_ChestMesh->SetVisibility(true);
+			Static_ChestMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		}
+		if (Skeletal_ChestMesh)
+		{
+			Skeletal_ChestMesh->SetVisibility(false);
+			Skeletal_ChestMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+	}
+	else
+	{
+		// Skeletal mesh mode
+		if (Static_ChestMesh)
+		{
+			Static_ChestMesh->SetVisibility(false);
+			Static_ChestMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+		if (Skeletal_ChestMesh)
+		{
+			Skeletal_ChestMesh->SetVisibility(true);
+			Skeletal_ChestMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			
+			// Setup skeletal mesh and animation
+			if (VisualConfig.SkeletalMesh)
+			{
+				Skeletal_ChestMesh->SetSkeletalMesh(VisualConfig.SkeletalMesh);
+			}
+			
+			// Set to closed position (frame 0)
+			SetSkeletalAnimationPosition(0.0f);
+		}
+	}
+
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: Configured mesh visibility (Static: %s, Skeletal: %s)"),
+		*GetName(),
+		Static_ChestMesh && Static_ChestMesh->IsVisible() ? TEXT("Visible") : TEXT("Hidden"),
+		Skeletal_ChestMesh && Skeletal_ChestMesh->IsVisible() ? TEXT("Visible") : TEXT("Hidden"));
+}
 
 void ALootChest::SetupInteraction()
 {
@@ -92,15 +147,20 @@ void ALootChest::SetupInteraction()
 	InteractableManager->Config.InteractionText = FText::FromString(TEXT("Open Chest"));
 	InteractableManager->Config.ActionName = FName("Interact");
 
-	// Setup highlight meshes
-	if (Static_ChestMesh)
+	// Setup highlight meshes (only add the visible one)
+	if (VisualConfig.bUseStaticMesh)
 	{
-		InteractableManager->MeshesToHighlight.Add(Static_ChestMesh);
+		if (Static_ChestMesh)
+		{
+			InteractableManager->MeshesToHighlight.Add(Static_ChestMesh);
+		}
 	}
-
-	if (Skeletal_ChestMesh)
+	else
 	{
-		InteractableManager->MeshesToHighlight.Add(Skeletal_ChestMesh);
+		if (Skeletal_ChestMesh)
+		{
+			InteractableManager->MeshesToHighlight.Add(Skeletal_ChestMesh);
+		}
 	}
 
 	// Bind interaction event
@@ -195,17 +255,27 @@ void ALootChest::ResetChest()
 		return;
 	}
 
-	// Clear timers
+	// Clear any existing timers
 	GetWorldTimerManager().ClearTimer(OpenAnimationTimer);
+	GetWorldTimerManager().ClearTimer(CloseAnimationTimer);
 	GetWorldTimerManager().ClearTimer(RespawnTimer);
 
-	// Reset state
-	LastInteractor = nullptr;
-	LastLootBatch = FLootResultBatch();
-
-	SetChestState(EChestState::CS_Closed);
-
-	UE_LOG(LogLootChest, Log, TEXT("%s: Reset to closed state"), *GetName());
+	// If using skeletal mesh with animation, play reverse animation
+	if (!VisualConfig.bUseStaticMesh && AnimationConfig.bPlayOpenAnimation && VisualConfig.OpenAnimation)
+	{
+		SetChestState(EChestState::CS_Closing);
+		PlayCloseSound();
+		StartCloseAnimation();
+	}
+	else
+	{
+		// Static mesh or no animation - immediate reset
+		LastInteractor = nullptr;
+		LastLootBatch = FLootResultBatch();
+		SetChestState(EChestState::CS_Closed);
+		
+		UE_LOG(LogLootChest, Log, TEXT("%s: Reset to closed state (immediate)"), *GetName());
+	}
 }
 
 void ALootChest::ForceRespawn()
@@ -247,10 +317,28 @@ void ALootChest::OnRep_ChestState()
 	UpdateInteractionForState();
 
 	// Play feedback on clients
-	if (ChestState == EChestState::CS_Opening || ChestState == EChestState::CS_Open)
+	switch (ChestState)
 	{
+	case EChestState::CS_Opening:
+	case EChestState::CS_Open:
 		PlayOpenSound();
 		PlayOpenVFX();
+		if (ChestState == EChestState::CS_Opening && !VisualConfig.bUseStaticMesh)
+		{
+			PlaySkeletalAnimation(false); // Forward
+		}
+		break;
+
+	case EChestState::CS_Closing:
+		PlayCloseSound();
+		if (!VisualConfig.bUseStaticMesh)
+		{
+			PlaySkeletalAnimation(true); // Reverse
+		}
+		break;
+
+	default:
+		break;
 	}
 }
 
@@ -280,36 +368,66 @@ void ALootChest::SetChestState(EChestState NewState)
 
 void ALootChest::UpdateMeshForState()
 {
-	if (!Static_ChestMesh && Skeletal_ChestMesh)
+	if (VisualConfig.bUseStaticMesh)
 	{
-		return;
+		// Static mesh mode - swap meshes based on state
+		if (!Static_ChestMesh)
+		{
+			return;
+		}
+
+		switch (ChestState)
+		{
+		case EChestState::CS_Closed:
+		case EChestState::CS_Respawning:
+			if (VisualConfig.ClosedMesh)
+			{
+				Static_ChestMesh->SetStaticMesh(VisualConfig.ClosedMesh);
+			}
+			break;
+
+		case EChestState::CS_Open:
+		case EChestState::CS_Looted:
+			if (VisualConfig.OpenMesh)
+			{
+				Static_ChestMesh->SetStaticMesh(VisualConfig.OpenMesh);
+			}
+			break;
+
+		case EChestState::CS_Opening:
+		case EChestState::CS_Closing:
+			// Intermediate state - keep current mesh
+			break;
+		}
 	}
-
-	
-	switch (ChestState)
+	else
 	{
-	case EChestState::CS_Closed:
-	case EChestState::CS_Respawning:
-		if (VisualConfig.ClosedMesh && VisualConfig.bUseStaticMesh)
+		// Skeletal mesh mode - animation handles visual state
+		// Only need to set position for instant state changes (no animation)
+		if (!Skeletal_ChestMesh || !VisualConfig.OpenAnimation)
 		{
-			Static_ChestMesh->SetStaticMesh(VisualConfig.ClosedMesh);
+			return;
 		}
-		else if (VisualConfig.SkeletalMesh && !VisualConfig.bUseStaticMesh)
-		{
-			Skeletal_ChestMesh->SetSkeletalMesh(VisualConfig.SkeletalMesh);
-		}
-		break;
 
-	case EChestState::CS_Open:
-	case EChestState::CS_Looted:
-		if (VisualConfig.OpenMesh && VisualConfig.bUseStaticMesh)
+		switch (ChestState)
 		{
-			Static_ChestMesh->SetStaticMesh(VisualConfig.OpenMesh);
-		}
-		break;
+		case EChestState::CS_Closed:
+		case EChestState::CS_Respawning:
+			// Ensure at closed position
+			SetSkeletalAnimationPosition(0.0f);
+			break;
 
-	case EChestState::CS_Opening:
-		break;
+		case EChestState::CS_Open:
+		case EChestState::CS_Looted:
+			// Ensure at open position
+			SetSkeletalAnimationPosition(1.0f);
+			break;
+
+		case EChestState::CS_Opening:
+		case EChestState::CS_Closing:
+			// Animation in progress - don't interfere
+			break;
+		}
 	}
 }
 
@@ -338,7 +456,6 @@ void ALootChest::GetPlayerLootStats(AActor* Player, float& OutLuck, float& OutMa
 		return;
 	}
 
-	// FIX: Use existing StatsManager instead of placeholder!
 	if (UStatsManager* Stats = Player->FindComponentByClass<UStatsManager>())
 	{
 		if (bApplyPlayerLuck)
@@ -404,24 +521,41 @@ void ALootChest::GenerateAndSpawnLoot(AActor* Opener)
 // ANIMATION (Timer-based - OPTIMIZATION: No wasteful Tick!)
 // ═══════════════════════════════════════════════════════════════════════
 
+float ALootChest::GetAnimationDuration() const
+{
+	// For skeletal mesh, use actual animation length
+	if (!VisualConfig.bUseStaticMesh && VisualConfig.OpenAnimation)
+	{
+		const float AnimLength = VisualConfig.OpenAnimation->GetPlayLength();
+		const float PlayRate = FMath::Max(AnimationConfig.AnimationPlayRate, 0.1f);
+		return AnimLength / PlayRate;
+	}
+
+	// For static mesh, use configured duration
+	return AnimationConfig.OpenAnimationDuration;
+}
+
 void ALootChest::StartOpenAnimation()
 {
-	// Use timer instead of Tick for animation
+	const float Duration = GetAnimationDuration();
+
+	// Start animation based on mesh type
+	if (!VisualConfig.bUseStaticMesh)
+	{
+		PlaySkeletalAnimation(false); // Forward
+	}
+
+	// Set timer for completion callback
 	GetWorldTimerManager().SetTimer(
 		OpenAnimationTimer,
 		this,
 		&ALootChest::OnOpenAnimationComplete,
-		AnimationConfig.OpenAnimationDuration,
-		false  // No looping
+		Duration,
+		false
 	);
 
-	// TODO: If you need interpolation during animation, you could:
-	// 1. Use a Timeline component (Blueprint-friendly)
-	// 2. Use FTimerDelegate with smaller intervals
-	// 3. Use a Latent Action
-
-	UE_LOG(LogLootChest, Verbose, TEXT("%s: Started open animation (%.2fs)"),
-		*GetName(), AnimationConfig.OpenAnimationDuration);
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: Started open animation (%.2fs, %s)"),
+		*GetName(), Duration, VisualConfig.bUseStaticMesh ? TEXT("Static") : TEXT("Skeletal"));
 }
 
 void ALootChest::OnOpenAnimationComplete()
@@ -435,6 +569,99 @@ void ALootChest::OnOpenAnimationComplete()
 	UE_LOG(LogLootChest, Verbose, TEXT("%s: Open animation complete"), *GetName());
 }
 
+void ALootChest::StartCloseAnimation()
+{
+	const float Duration = GetAnimationDuration();
+
+	// Start reverse animation
+	if (!VisualConfig.bUseStaticMesh)
+	{
+		PlaySkeletalAnimation(true); // Reverse
+	}
+
+	// Set timer for completion callback
+	GetWorldTimerManager().SetTimer(
+		CloseAnimationTimer,
+		this,
+		&ALootChest::OnCloseAnimationComplete,
+		Duration,
+		false
+	);
+
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: Started close animation (%.2fs, reverse)"),
+		*GetName(), Duration);
+}
+
+void ALootChest::OnCloseAnimationComplete()
+{
+	// Reset state data
+	LastInteractor = nullptr;
+	LastLootBatch = FLootResultBatch();
+
+	// Transition to closed state
+	SetChestState(EChestState::CS_Closed);
+
+	UE_LOG(LogLootChest, Log, TEXT("%s: Reset to closed state (animation complete)"), *GetName());
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SKELETAL MESH ANIMATION HELPERS
+// ═══════════════════════════════════════════════════════════════════════
+
+void ALootChest::PlaySkeletalAnimation(bool bReverse)
+{
+	if (!Skeletal_ChestMesh || !VisualConfig.OpenAnimation)
+	{
+		UE_LOG(LogLootChest, Warning, TEXT("%s: Cannot play skeletal animation - missing component or animation"),
+			*GetName());
+		return;
+	}
+
+	const float PlayRate = AnimationConfig.AnimationPlayRate * (bReverse ? -1.0f : 1.0f);
+	const float StartPosition = bReverse ? VisualConfig.OpenAnimation->GetPlayLength() : 0.0f;
+
+	// Play animation with specified rate and start position
+	Skeletal_ChestMesh->PlayAnimation(VisualConfig.OpenAnimation, false);
+	Skeletal_ChestMesh->SetPlayRate(PlayRate);
+	Skeletal_ChestMesh->SetPosition(StartPosition);
+
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: Playing skeletal animation (Rate: %.2f, Start: %.2f, Reverse: %s)"),
+		*GetName(), PlayRate, StartPosition, bReverse ? TEXT("Yes") : TEXT("No"));
+}
+
+void ALootChest::StopSkeletalAnimation()
+{
+	if (!Skeletal_ChestMesh)
+	{
+		return;
+	}
+
+	Skeletal_ChestMesh->Stop();
+}
+
+void ALootChest::SetSkeletalAnimationPosition(float NormalizedPosition)
+{
+	if (!Skeletal_ChestMesh || !VisualConfig.OpenAnimation)
+	{
+		return;
+	}
+
+	// Clamp to valid range
+	NormalizedPosition = FMath::Clamp(NormalizedPosition, 0.0f, 1.0f);
+
+	// Calculate actual position in animation
+	const float AnimLength = VisualConfig.OpenAnimation->GetPlayLength();
+	const float TargetPosition = NormalizedPosition * AnimLength;
+
+	// Set animation to specific frame (stopped)
+	Skeletal_ChestMesh->SetAnimation(VisualConfig.OpenAnimation);
+	Skeletal_ChestMesh->SetPosition(TargetPosition);
+	Skeletal_ChestMesh->SetPlayRate(0.0f); // Stopped
+
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: Set skeletal animation position to %.2f (%.2fs)"),
+		*GetName(), NormalizedPosition, TargetPosition);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // VISUAL/AUDIO FEEDBACK
 // ═══════════════════════════════════════════════════════════════════════
@@ -446,6 +673,18 @@ void ALootChest::PlayOpenSound()
 		UGameplayStatics::PlaySoundAtLocation(
 			this,
 			FeedbackConfig.OpenSound,
+			GetActorLocation()
+		);
+	}
+}
+
+void ALootChest::PlayCloseSound()
+{
+	if (FeedbackConfig.CloseSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			this,
+			FeedbackConfig.CloseSound,
 			GetActorLocation()
 		);
 	}
@@ -491,18 +730,23 @@ void ALootChest::StartRespawnTimer()
 
 void ALootChest::HandleRespawn()
 {
-	// Reset loot component source if needed
-	if (RespawnConfig.bRerollLootOnRespawn && LootComponent)
+	// Play close animation if configured
+	if (RespawnConfig.bPlayCloseAnimationOnRespawn && 
+		!VisualConfig.bUseStaticMesh && 
+		VisualConfig.OpenAnimation &&
+		AnimationConfig.bPlayOpenAnimation)
 	{
-		// The component will generate new loot on next interaction
-		// No action needed here - it uses fresh random seeds each time
+		PlayCloseSound();
+		StartCloseAnimation();
+		// Close animation will set state to CS_Closed when complete
 	}
-
-	// Reset state
-	LastInteractor = nullptr;
-	LastLootBatch = FLootResultBatch();
-
-	SetChestState(EChestState::CS_Closed);
+	else
+	{
+		// Immediate respawn
+		LastInteractor = nullptr;
+		LastLootBatch = FLootResultBatch();
+		SetChestState(EChestState::CS_Closed);
+	}
 
 	// Broadcast event
 	OnChestRespawned();
