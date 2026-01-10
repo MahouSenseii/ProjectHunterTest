@@ -106,7 +106,8 @@ int32 FGroundItemPickupManager::PickupAllNearby(FVector Location)
 	}
 
 	// Get all items in radius
-	TArray<UItemInstance*> NearbyItems = CachedGroundItemSubsystem->GetItemsInRadius(Location, PickupRadius);
+	
+	TArray<UItemInstance*> NearbyItems = CachedGroundItemSubsystem->GetItemInstancesInRadius(Location, PickupRadius);
 
 	int32 PickedUpCount = 0;
 	

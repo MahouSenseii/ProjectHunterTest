@@ -10,13 +10,17 @@
 class UInteractableManager;
 class UStaticMeshComponent;
 class UItemInstance;
+class ULootComponent;
 class ULootSubsystem;
-class UGroundItemSubsystem;
+class UStatsManager;
 class USoundBase;
-class UParticleSystem;
 class UNiagaraSystem;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogLootChest, Log, All);
+
+// ═══════════════════════════════════════════════════════════════════════
+// CHEST STATE
+// ═══════════════════════════════════════════════════════════════════════
 
 /**
  * Chest state machine
@@ -31,40 +35,94 @@ enum class EChestState : uint8
 	CS_Respawning UMETA(DisplayName = "Respawning")
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+// SPLIT CONFIG STRUCTS (Single Responsibility)
+// ═══════════════════════════════════════════════════════════════════════
+
 /**
- * FLootChestConfig - Visual and behavior configuration
- * 
- * SINGLE RESPONSIBILITY: Chest visuals, animation, and respawn settings
- * Loot generation is handled by SourceID → LootSubsystem
+ * FChestVisualConfig - Mesh and appearance settings
+ * SINGLE RESPONSIBILITY: Visual representation only
  */
 USTRUCT(BlueprintType)
-struct FLootChestConfig
+struct FChestVisualConfig
 {
 	GENERATED_BODY()
 
-	// ═══════════════════════════════════════════════
-	// LOOT SOURCE (References DT_LootSourceRegistry)
-	// ═══════════════════════════════════════════════
+	/** Mesh when closed */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+	UStaticMesh* ClosedMesh = nullptr;
 
-	/** Source ID in DT_LootSourceRegistry (e.g., "Chest_Common", "Chest_Rare") */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
-	FName LootSourceID;
+	/** Mesh when open */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+	UStaticMesh* OpenMesh = nullptr;
+};
 
-	/** Override level (0 = use source default) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot", meta = (ClampMin = "0", ClampMax = "100"))
-	int32 LevelOverride = 0;
+/**
+ * FChestAnimationConfig - Animation settings
+ * SINGLE RESPONSIBILITY: Animation behavior only
+ */
+USTRUCT(BlueprintType)
+struct FChestAnimationConfig
+{
+	GENERATED_BODY()
 
-	/** Apply player luck bonus? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
-	bool bApplyPlayerLuck = true;
+	/** Play open animation? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	bool bPlayOpenAnimation = true;
 
-	/** Apply player magic find bonus? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
-	bool bApplyPlayerMagicFind = true;
+	/** Open animation duration */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation", meta = (EditCondition = "bPlayOpenAnimation", ClampMin = "0.1"))
+	float OpenAnimationDuration = 0.5f;
+};
 
-	// ═══════════════════════════════════════════════
-	// SPAWN SETTINGS
-	// ═══════════════════════════════════════════════
+/**
+ * FChestFeedbackConfig - Audio and VFX settings
+ * SINGLE RESPONSIBILITY: Sensory feedback only
+ */
+USTRUCT(BlueprintType)
+struct FChestFeedbackConfig
+{
+	GENERATED_BODY()
+
+	/** Sound when opened */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	USoundBase* OpenSound = nullptr;
+
+	/** Niagara effect when opened */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
+	UNiagaraSystem* OpenNiagaraEffect = nullptr;
+};
+
+/**
+ * FChestRespawnConfig - Respawn behavior settings
+ * SINGLE RESPONSIBILITY: Respawn logic only
+ */
+USTRUCT(BlueprintType)
+struct FChestRespawnConfig
+{
+	GENERATED_BODY()
+
+	/** Can this chest respawn? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn")
+	bool bCanRespawn = false;
+
+	/** Time until respawn (seconds) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", meta = (EditCondition = "bCanRespawn", ClampMin = "0.0"))
+	float RespawnTime = 300.0f;
+
+	/** Re-roll loot on respawn? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", meta = (EditCondition = "bCanRespawn"))
+	bool bRerollLootOnRespawn = true;
+};
+
+/**
+ * FChestSpawnConfig - Loot spawn positioning
+ * SINGLE RESPONSIBILITY: Item spawn placement only
+ */
+USTRUCT(BlueprintType)
+struct FChestSpawnConfig
+{
+	GENERATED_BODY()
 
 	/** Radius to scatter loot around chest */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn", meta = (ClampMin = "0.0"))
@@ -78,101 +136,38 @@ struct FLootChestConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn")
 	bool bRandomScatter = true;
 
-	// ═══════════════════════════════════════════════
-	// VISUALS
-	// ═══════════════════════════════════════════════
-
-	/** Mesh when closed */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UStaticMesh* ClosedMesh = nullptr;
-
-	/** Mesh when open */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UStaticMesh* OpenMesh = nullptr;
-
-	// ═══════════════════════════════════════════════
-	// ANIMATION
-	// ═══════════════════════════════════════════════
-
-	/** Play open animation? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
-	bool bPlayOpenAnimation = true;
-
-	/** Open animation duration */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation", meta = (EditCondition = "bPlayOpenAnimation", ClampMin = "0.1"))
-	float OpenAnimationDuration = 0.5f;
-
-	// ═══════════════════════════════════════════════
-	// AUDIO
-	// ═══════════════════════════════════════════════
-
-	/** Sound when opened */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
-	USoundBase* OpenSound = nullptr;
-
-	// ═══════════════════════════════════════════════
-	// VFX
-	// ═══════════════════════════════════════════════
-
-	/** Particle effect when opened (legacy) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
-	UParticleSystem* OpenParticle = nullptr;
-
-	/** Niagara effect when opened */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
-	UNiagaraSystem* OpenNiagaraEffect = nullptr;
-
-	// ═══════════════════════════════════════════════
-	// RESPAWN
-	// ═══════════════════════════════════════════════
-
-	/** Can this chest respawn? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn")
-	bool bCanRespawn = false;
-
-	/** Time until respawn (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", meta = (EditCondition = "bCanRespawn", ClampMin = "0.0"))
-	float RespawnTime = 300.0f;
-
-	/** Re-roll loot on respawn? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Respawn", meta = (EditCondition = "bCanRespawn"))
-	bool bRerollLootOnRespawn = true;
-
-	FLootChestConfig()
-		: LevelOverride(0)
-		, bApplyPlayerLuck(true)
-		, bApplyPlayerMagicFind(true)
-		, ScatterRadius(150.0f)
-		, SpawnHeightOffset(50.0f)
-		, bRandomScatter(true)
-		, ClosedMesh(nullptr)
-		, OpenMesh(nullptr)
-		, bPlayOpenAnimation(true)
-		, OpenAnimationDuration(0.5f)
-		, OpenSound(nullptr)
-		, OpenParticle(nullptr)
-		, OpenNiagaraEffect(nullptr)
-		, bCanRespawn(false)
-		, RespawnTime(300.0f)
-		, bRerollLootOnRespawn(true)
-	{}
+	/** Convert to FLootSpawnSettings for subsystem */
+	FLootSpawnSettings ToSpawnSettings(FVector BaseLocation) const
+	{
+		FLootSpawnSettings Settings;
+		Settings.SpawnLocation = BaseLocation;
+		Settings.ScatterRadius = ScatterRadius;
+		Settings.HeightOffset = SpawnHeightOffset;
+		Settings.bRandomScatter = bRandomScatter;
+		return Settings;
+	}
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+// LOOT CHEST ACTOR
+// ═══════════════════════════════════════════════════════════════════════
+
 /**
- * ALootChest - Loot chest actor
+ * ALootChest - Interactable loot chest actor
  * 
- * SINGLE RESPONSIBILITY: Manage chest behavior and delegate loot generation
+ * SINGLE RESPONSIBILITY: Coordinate chest behavior and delegate concerns
  * 
  * DESIGN:
  * - State machine (Closed → Opening → Open → Looted → Respawning)
- * - Delegates loot generation to ULootSubsystem
- * - Uses SourceID to reference loot registry
- * - Handles visuals, audio, and respawn locally
+ * - Delegates loot generation to ULootComponent
+ * - Uses split config structs for clean organization
+ * - Timer-based animation (no wasteful tick)
+ * - Server-authoritative with client prediction
  * 
  * USAGE:
  *   1. Place chest in level
- *   2. Set Config.LootSourceID to registry entry (e.g., "Chest_Common")
- *   3. Configure visuals, respawn, etc.
+ *   2. Configure LootComponent.SourceID (e.g., "Chest_Common")
+ *   3. Configure visual, animation, feedback settings
  *   4. Player interacts → loot generates and spawns
  */
 UCLASS()
@@ -184,7 +179,7 @@ public:
 	ALootChest();
 
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
+	// NOTE: No Tick() - uses timer-based animation instead
 
 	// ═══════════════════════════════════════════════
 	// COMPONENTS
@@ -202,13 +197,44 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UInteractableManager* InteractableManager;
 
+	/** 
+	 * Loot component - handles loot generation and spawning
+	 * Configure SourceID here (e.g., "Chest_Common", "Chest_Rare")
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	ULootComponent* LootComponent;
+
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION
+	// CONFIGURATION (Split by responsibility)
 	// ═══════════════════════════════════════════════
 
-	/** Chest configuration */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest", meta = (ShowOnlyInnerProperties))
-	FLootChestConfig Config;
+	/** Visual appearance settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Visuals")
+	FChestVisualConfig VisualConfig;
+
+	/** Animation settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Animation")
+	FChestAnimationConfig AnimationConfig;
+
+	/** Audio/VFX feedback settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Feedback")
+	FChestFeedbackConfig FeedbackConfig;
+
+	/** Respawn behavior settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Respawn")
+	FChestRespawnConfig RespawnConfig;
+
+	/** Loot spawn positioning settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Spawn")
+	FChestSpawnConfig SpawnConfig;
+
+	/** Apply player luck bonus to loot? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Loot")
+	bool bApplyPlayerLuck = true;
+
+	/** Apply player magic find bonus to loot? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Loot")
+	bool bApplyPlayerMagicFind = true;
 
 	// ═══════════════════════════════════════════════
 	// STATE
@@ -301,7 +327,7 @@ protected:
 
 	void SetupInteraction();
 	void SetupVisuals();
-	void CacheSubsystems();
+	void SetupLootComponent();
 
 	// ═══════════════════════════════════════════════
 	// INTERACTION CALLBACKS
@@ -319,50 +345,34 @@ protected:
 	void UpdateInteractionForState();
 
 	// ═══════════════════════════════════════════════
-	// LOOT GENERATION (Delegates to LootSubsystem)
+	// LOOT (Delegates to LootComponent)
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Generate loot using LootSubsystem
-	 * @return Generated loot batch
-	 */
-	FLootResultBatch GenerateLoot();
-
-	/**
-	 * Build loot request from config
-	 * @return Configured loot request
-	 */
-	FLootRequest BuildLootRequest() const;
-
-	/**
-	 * Get player stats for loot bonuses
+	 * Get player stats for loot generation
 	 * @param Player - Player actor
 	 * @param OutLuck - Player's luck stat
 	 * @param OutMagicFind - Player's magic find stat
 	 */
 	void GetPlayerLootStats(AActor* Player, float& OutLuck, float& OutMagicFind) const;
 
+	/**
+	 * Generate and spawn loot using LootComponent
+	 * @param Opener - Who opened the chest
+	 */
+	void GenerateAndSpawnLoot(AActor* Opener);
+
 	// ═══════════════════════════════════════════════
-	// LOOT SPAWNING
+	// ANIMATION (Timer-based, not Tick-based)
 	// ═══════════════════════════════════════════════
 
-	/**
-	 * Spawn generated loot on ground
-	 * @param LootBatch - Loot to spawn
-	 */
-	void SpawnLoot(const FLootResultBatch& LootBatch);
-
-	/**
-	 * Build spawn settings from config
-	 * @return Configured spawn settings
-	 */
-	FLootSpawnSettings BuildSpawnSettings() const;
+	void StartOpenAnimation();
+	void OnOpenAnimationComplete();
 
 	// ═══════════════════════════════════════════════
 	// VISUAL/AUDIO FEEDBACK
 	// ═══════════════════════════════════════════════
 
-	void PlayOpenAnimation();
 	void PlayOpenSound();
 	void PlayOpenVFX();
 
@@ -374,17 +384,9 @@ protected:
 	void HandleRespawn();
 
 	// ═══════════════════════════════════════════════
-	// CACHED REFERENCES
-	// ═══════════════════════════════════════════════
-
-	UPROPERTY()
-	ULootSubsystem* CachedLootSubsystem;
-
-	// ═══════════════════════════════════════════════
-	// TIMERS & ANIMATION
+	// TIMERS
 	// ═══════════════════════════════════════════════
 
 	FTimerHandle OpenAnimationTimer;
 	FTimerHandle RespawnTimer;
-	float OpenAnimationProgress;
 };

@@ -2,16 +2,16 @@
 
 #include "Interactable/Actors/LootChest/LootChest.h"
 #include "Interactable/Component/InteractableManager.h"
+#include "Loot/Component/LootComponent.h"
 #include "Loot/Subsystem/LootSubsystem.h"
+#include "Character/Component/StatsManager.h"
 #include "Item/ItemInstance.h"
 #include "Components/StaticMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
-
-// For player stats - adjust include based on your stat system
-// #include "Character/Component/PlayerStatsComponent.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY(LogLootChest);
 
@@ -21,24 +21,28 @@ DEFINE_LOG_CATEGORY(LogLootChest);
 
 ALootChest::ALootChest()
 {
-	PrimaryActorTick.bCanEverTick = true;
+	// OPTIMIZATION: No tick needed - we use timers for animation
+	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 
-	// Create components
+	// Create root component
 	RootSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootScene"));
 	RootComponent = RootSceneComponent;
 
+	// Create chest mesh
 	ChestMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ChestMesh"));
 	ChestMesh->SetupAttachment(RootComponent);
 	ChestMesh->SetCollisionProfileName(TEXT("BlockAll"));
 
+	// Create interaction component
 	InteractableManager = CreateDefaultSubobject<UInteractableManager>(TEXT("InteractableManager"));
+
+	// Create loot component (handles all loot generation/spawning)
+	LootComponent = CreateDefaultSubobject<ULootComponent>(TEXT("LootComponent"));
 
 	// Initialize state
 	ChestState = EChestState::CS_Closed;
-	OpenAnimationProgress = 0.0f;
 	LastInteractor = nullptr;
-	CachedLootSubsystem = nullptr;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -49,62 +53,25 @@ void ALootChest::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Cache subsystems
-	CacheSubsystems();
-
-	// Setup interaction
+	// Setup components
 	SetupInteraction();
-
-	// Setup visuals
 	SetupVisuals();
+	SetupLootComponent();
 
 	// Validate source
 	if (!IsSourceValid())
 	{
-		UE_LOG(LogLootChest, Warning, TEXT("%s: LootSourceID '%s' not found in registry"),
-			*GetName(), *Config.LootSourceID.ToString());
+		UE_LOG(LogLootChest, Warning, TEXT("%s: LootComponent.SourceID '%s' not found in registry"),
+			*GetName(), *LootComponent->SourceID.ToString());
 	}
 
 	UE_LOG(LogLootChest, Log, TEXT("%s: Initialized with source '%s'"),
-		*GetName(), *Config.LootSourceID.ToString());
-}
-
-void ALootChest::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-
-	// Update open animation
-	if (ChestState == EChestState::CS_Opening && Config.bPlayOpenAnimation)
-	{
-		OpenAnimationProgress += DeltaTime / Config.OpenAnimationDuration;
-		
-		if (OpenAnimationProgress >= 1.0f)
-		{
-			OpenAnimationProgress = 1.0f;
-			SetChestState(EChestState::CS_Open);
-		}
-
-		// TODO: Implement custom animation logic here
-		// e.g., rotate lid mesh based on OpenAnimationProgress
-	}
+		*GetName(), *LootComponent->SourceID.ToString());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════
-
-void ALootChest::CacheSubsystems()
-{
-	if (UWorld* World = GetWorld())
-	{
-		CachedLootSubsystem = World->GetSubsystem<ULootSubsystem>();
-		
-		if (!CachedLootSubsystem)
-		{
-			UE_LOG(LogLootChest, Error, TEXT("%s: LootSubsystem not found!"), *GetName());
-		}
-	}
-}
 
 void ALootChest::SetupInteraction()
 {
@@ -136,6 +103,18 @@ void ALootChest::SetupVisuals()
 	UpdateMeshForState();
 }
 
+void ALootChest::SetupLootComponent()
+{
+	if (!LootComponent)
+	{
+		UE_LOG(LogLootChest, Error, TEXT("%s: LootComponent is null!"), *GetName());
+		return;
+	}
+
+	// Configure spawn settings from our config
+	LootComponent->DefaultSpawnSettings = SpawnConfig.ToSpawnSettings(GetActorLocation());
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // INTERACTION CALLBACKS
 // ═══════════════════════════════════════════════════════════════════════
@@ -145,8 +124,8 @@ void ALootChest::OnInteracted(AActor* Interactor)
 	// Only allow interaction when closed
 	if (ChestState != EChestState::CS_Closed)
 	{
-		UE_LOG(LogLootChest, Warning, TEXT("%s: Cannot interact - state is %d"),
-			*GetName(), static_cast<int32>(ChestState));
+		UE_LOG(LogLootChest, Verbose, TEXT("%s: Cannot interact - state is %s"),
+			*GetName(), *UEnum::GetValueAsString(ChestState));
 		return;
 	}
 
@@ -164,6 +143,13 @@ void ALootChest::OpenChest(AActor* Opener)
 		return;
 	}
 
+	// Server authority check
+	if (!HasAuthority())
+	{
+		// TODO: RPC to server
+		return;
+	}
+
 	LastInteractor = Opener;
 
 	// Change state to opening
@@ -173,14 +159,15 @@ void ALootChest::OpenChest(AActor* Opener)
 	PlayOpenSound();
 	PlayOpenVFX();
 
-	// Start animation or skip to open
-	if (Config.bPlayOpenAnimation)
+	// Start animation (timer-based, not tick-based!)
+	if (AnimationConfig.bPlayOpenAnimation)
 	{
-		PlayOpenAnimation();
+		StartOpenAnimation();
 	}
 	else
 	{
-		SetChestState(EChestState::CS_Open);
+		// Skip animation, go directly to open
+		OnOpenAnimationComplete();
 	}
 
 	// Broadcast event
@@ -192,38 +179,68 @@ void ALootChest::OpenChest(AActor* Opener)
 
 void ALootChest::ResetChest()
 {
-	// Clear last loot batch
-	LastLootBatch.Clear();
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// Clear timers
+	GetWorldTimerManager().ClearTimer(OpenAnimationTimer);
+	GetWorldTimerManager().ClearTimer(RespawnTimer);
 
 	// Reset state
+	LastInteractor = nullptr;
+	LastLootBatch = FLootResultBatch();
+
 	SetChestState(EChestState::CS_Closed);
 
-	// Clear interactor
-	LastInteractor = nullptr;
-
-	UE_LOG(LogLootChest, Log, TEXT("%s: Reset"), *GetName());
+	UE_LOG(LogLootChest, Log, TEXT("%s: Reset to closed state"), *GetName());
 }
 
 void ALootChest::ForceRespawn()
 {
-	// Clear respawn timer
-	if (GetWorld())
+	if (!HasAuthority())
 	{
-		GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
+		return;
 	}
 
-	// Respawn immediately
+	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	HandleRespawn();
 }
 
 bool ALootChest::IsSourceValid() const
 {
-	if (!CachedLootSubsystem || Config.LootSourceID.IsNone())
+	if (!LootComponent)
 	{
 		return false;
 	}
 
-	return CachedLootSubsystem->IsSourceRegistered(Config.LootSourceID);
+	return LootComponent->IsSourceValid();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// NETWORKING
+// ═══════════════════════════════════════════════════════════════════════
+
+void ALootChest::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ALootChest, ChestState);
+}
+
+void ALootChest::OnRep_ChestState()
+{
+	// Client-side visual updates
+	UpdateMeshForState();
+	UpdateInteractionForState();
+
+	// Play feedback on clients
+	if (ChestState == EChestState::CS_Opening || ChestState == EChestState::CS_Open)
+	{
+		PlayOpenSound();
+		PlayOpenVFX();
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -242,47 +259,12 @@ void ALootChest::SetChestState(EChestState NewState)
 
 	// Update visuals
 	UpdateMeshForState();
-
-	// Update interaction
 	UpdateInteractionForState();
 
-	// Handle state transitions
-	switch (ChestState)
-	{
-	case EChestState::CS_Open:
-		{
-			// Generate and spawn loot when fully opened
-			FLootResultBatch LootBatch = GenerateLoot();
-			
-			if (LootBatch.TotalItemCount > 0)
-			{
-				SpawnLoot(LootBatch);
-				OnLootGenerated(LootBatch);
-			}
-			
-			// Transition to looted
-			SetChestState(EChestState::CS_Looted);
-		}
-		break;
-
-	case EChestState::CS_Looted:
-		{
-			OnChestLooted();
-			
-			// Start respawn timer if enabled
-			if (Config.bCanRespawn)
-			{
-				StartRespawnTimer();
-			}
-		}
-		break;
-
-	default:
-		break;
-	}
-
-	UE_LOG(LogLootChest, Log, TEXT("%s: State changed %d → %d"),
-		*GetName(), static_cast<int32>(OldState), static_cast<int32>(ChestState));
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: State changed from %s to %s"),
+		*GetName(),
+		*UEnum::GetValueAsString(OldState),
+		*UEnum::GetValueAsString(NewState));
 }
 
 void ALootChest::UpdateMeshForState()
@@ -296,22 +278,22 @@ void ALootChest::UpdateMeshForState()
 	{
 	case EChestState::CS_Closed:
 	case EChestState::CS_Respawning:
-		if (Config.ClosedMesh)
+		if (VisualConfig.ClosedMesh)
 		{
-			ChestMesh->SetStaticMesh(Config.ClosedMesh);
+			ChestMesh->SetStaticMesh(VisualConfig.ClosedMesh);
 		}
 		break;
 
 	case EChestState::CS_Open:
 	case EChestState::CS_Looted:
-		if (Config.OpenMesh)
+		if (VisualConfig.OpenMesh)
 		{
-			ChestMesh->SetStaticMesh(Config.OpenMesh);
+			ChestMesh->SetStaticMesh(VisualConfig.OpenMesh);
 		}
 		break;
 
 	case EChestState::CS_Opening:
-		// Animation handles this
+		// Animation in progress - mesh swap happens at completion
 		break;
 	}
 }
@@ -328,67 +310,8 @@ void ALootChest::UpdateInteractionForState()
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// LOOT GENERATION (Delegates to LootSubsystem)
+// LOOT (Delegates to LootComponent + StatsManager integration)
 // ═══════════════════════════════════════════════════════════════════════
-
-FLootResultBatch ALootChest::GenerateLoot()
-{
-	if (!CachedLootSubsystem)
-	{
-		UE_LOG(LogLootChest, Error, TEXT("%s: Cannot generate loot - LootSubsystem unavailable"),
-			*GetName());
-		return FLootResultBatch();
-	}
-
-	if (Config.LootSourceID.IsNone())
-	{
-		UE_LOG(LogLootChest, Warning, TEXT("%s: No LootSourceID configured"), *GetName());
-		return FLootResultBatch();
-	}
-
-	// Build request
-	FLootRequest Request = BuildLootRequest();
-
-	// Generate loot via subsystem
-	LastLootBatch = CachedLootSubsystem->GenerateLoot(Request);
-
-	UE_LOG(LogLootChest, Log, TEXT("%s: Generated %d items, %d currency"),
-		*GetName(), LastLootBatch.TotalItemCount, LastLootBatch.CurrencyDropped);
-
-	return LastLootBatch;
-}
-
-FLootRequest ALootChest::BuildLootRequest() const
-{
-	FLootRequest Request(Config.LootSourceID);
-
-	// Level override
-	Request.OverrideLevel = Config.LevelOverride;
-
-	// Player stats
-	if (LastInteractor)
-	{
-		float Luck = 0.0f;
-		float MagicFind = 0.0f;
-
-		if (Config.bApplyPlayerLuck || Config.bApplyPlayerMagicFind)
-		{
-			GetPlayerLootStats(LastInteractor, Luck, MagicFind);
-		}
-
-		if (Config.bApplyPlayerLuck)
-		{
-			Request.PlayerLuck = Luck;
-		}
-
-		if (Config.bApplyPlayerMagicFind)
-		{
-			Request.PlayerMagicFind = MagicFind;
-		}
-	}
-
-	return Request;
-}
 
 void ALootChest::GetPlayerLootStats(AActor* Player, float& OutLuck, float& OutMagicFind) const
 {
@@ -400,85 +323,114 @@ void ALootChest::GetPlayerLootStats(AActor* Player, float& OutLuck, float& OutMa
 		return;
 	}
 
-	// TODO: Replace with your actual stat system
-	// Example using a hypothetical PlayerStatsComponent:
-	//
-	// if (UPlayerStatsComponent* Stats = Player->FindComponentByClass<UPlayerStatsComponent>())
-	// {
-	//     OutLuck = Stats->GetLuck();
-	//     OutMagicFind = Stats->GetMagicFind();
-	// }
+	// FIX: Use existing StatsManager instead of placeholder!
+	if (UStatsManager* Stats = Player->FindComponentByClass<UStatsManager>())
+	{
+		if (bApplyPlayerLuck)
+		{
+			OutLuck = Stats->GetLuck();
+		}
+		
+		if (bApplyPlayerMagicFind)
+		{
+			OutMagicFind = Stats->GetMagicFind();
+		}
 
-	// Or using Gameplay Ability System:
-	//
-	// if (UAbilitySystemComponent* ASC = Player->FindComponentByClass<UAbilitySystemComponent>())
-	// {
-	//     OutLuck = ASC->GetNumericAttribute(UYourAttributeSet::GetLuckAttribute());
-	//     OutMagicFind = ASC->GetNumericAttribute(UYourAttributeSet::GetMagicFindAttribute());
-	// }
-
-	// Temporary: Check for a simple interface or use defaults
-	// This prevents compile errors until you integrate your stat system
+		UE_LOG(LogLootChest, Verbose, TEXT("%s: Got player stats - Luck: %.2f, MagicFind: %.2f"),
+			*GetName(), OutLuck, OutMagicFind);
+	}
+	else
+	{
+		UE_LOG(LogLootChest, Warning, TEXT("%s: Player %s has no StatsManager component"),
+			*GetName(), *Player->GetName());
+	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// LOOT SPAWNING
-// ═══════════════════════════════════════════════════════════════════════
-
-void ALootChest::SpawnLoot(const FLootResultBatch& LootBatch)
+void ALootChest::GenerateAndSpawnLoot(AActor* Opener)
 {
-	if (!CachedLootSubsystem)
+	if (!LootComponent)
 	{
-		UE_LOG(LogLootChest, Error, TEXT("%s: Cannot spawn loot - LootSubsystem unavailable"),
+		UE_LOG(LogLootChest, Error, TEXT("%s: Cannot generate loot - LootComponent unavailable"),
 			*GetName());
 		return;
 	}
 
-	if (LootBatch.Results.Num() == 0)
+	// Get player stats
+	float Luck = 0.0f;
+	float MagicFind = 0.0f;
+	GetPlayerLootStats(Opener, Luck, MagicFind);
+
+	// Update spawn location (in case chest moved)
+	LootComponent->DefaultSpawnSettings = SpawnConfig.ToSpawnSettings(GetActorLocation());
+
+	// Generate and spawn loot via component
+	LastLootBatch = LootComponent->DropLoot(Luck, MagicFind);
+
+	// Broadcast event
+	OnLootGenerated(LastLootBatch);
+
+	UE_LOG(LogLootChest, Log, TEXT("%s: Generated %d items, %d currency"),
+		*GetName(), LastLootBatch.TotalItemCount, LastLootBatch.CurrencyDropped);
+
+	// Transition to looted state
+	SetChestState(EChestState::CS_Looted);
+
+	// Broadcast looted event
+	OnChestLooted();
+
+	// Start respawn timer if enabled
+	if (RespawnConfig.bCanRespawn)
 	{
-		UE_LOG(LogLootChest, Warning, TEXT("%s: No items to spawn"), *GetName());
-		return;
+		StartRespawnTimer();
 	}
-
-	// Build spawn settings
-	FLootSpawnSettings SpawnSettings = BuildSpawnSettings();
-
-	// Spawn via subsystem
-	CachedLootSubsystem->SpawnLootResults(LootBatch, SpawnSettings);
-
-	UE_LOG(LogLootChest, Log, TEXT("%s: Spawned %d items"),
-		*GetName(), LootBatch.Results.Num());
 }
 
-FLootSpawnSettings ALootChest::BuildSpawnSettings() const
+// ═══════════════════════════════════════════════════════════════════════
+// ANIMATION (Timer-based - OPTIMIZATION: No wasteful Tick!)
+// ═══════════════════════════════════════════════════════════════════════
+
+void ALootChest::StartOpenAnimation()
 {
-	FLootSpawnSettings Settings;
+	// Use timer instead of Tick for animation
+	GetWorldTimerManager().SetTimer(
+		OpenAnimationTimer,
+		this,
+		&ALootChest::OnOpenAnimationComplete,
+		AnimationConfig.OpenAnimationDuration,
+		false  // No looping
+	);
 
-	Settings.SpawnLocation = GetActorLocation();
-	Settings.ScatterRadius = Config.ScatterRadius;
-	Settings.HeightOffset = Config.SpawnHeightOffset;
-	Settings.bRandomScatter = Config.bRandomScatter;
+	// TODO: If you need interpolation during animation, you could:
+	// 1. Use a Timeline component (Blueprint-friendly)
+	// 2. Use FTimerDelegate with smaller intervals
+	// 3. Use a Latent Action
 
-	return Settings;
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: Started open animation (%.2fs)"),
+		*GetName(), AnimationConfig.OpenAnimationDuration);
+}
+
+void ALootChest::OnOpenAnimationComplete()
+{
+	// Animation complete - transition to open state
+	SetChestState(EChestState::CS_Open);
+
+	// Now generate and spawn the loot
+	GenerateAndSpawnLoot(LastInteractor);
+
+	UE_LOG(LogLootChest, Verbose, TEXT("%s: Open animation complete"), *GetName());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // VISUAL/AUDIO FEEDBACK
 // ═══════════════════════════════════════════════════════════════════════
 
-void ALootChest::PlayOpenAnimation()
-{
-	OpenAnimationProgress = 0.0f;
-	// Animation is updated in Tick()
-}
-
 void ALootChest::PlayOpenSound()
 {
-	if (Config.OpenSound)
+	if (FeedbackConfig.OpenSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(
 			this,
-			Config.OpenSound,
+			FeedbackConfig.OpenSound,
 			GetActorLocation()
 		);
 	}
@@ -486,23 +438,13 @@ void ALootChest::PlayOpenSound()
 
 void ALootChest::PlayOpenVFX()
 {
-	// Legacy particle system
-	if (Config.OpenParticle)
-	{
-		UGameplayStatics::SpawnEmitterAtLocation(
-			GetWorld(),
-			Config.OpenParticle,
-			GetActorLocation()
-		);
-	}
-
-	// Niagara effect
-	if (Config.OpenNiagaraEffect)
+	if (FeedbackConfig.OpenNiagaraEffect)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-			GetWorld(),
-			Config.OpenNiagaraEffect,
-			GetActorLocation()
+			this,
+			FeedbackConfig.OpenNiagaraEffect,
+			GetActorLocation(),
+			GetActorRotation()
 		);
 	}
 }
@@ -513,56 +455,42 @@ void ALootChest::PlayOpenVFX()
 
 void ALootChest::StartRespawnTimer()
 {
-	if (!GetWorld() || Config.RespawnTime <= 0.0f)
+	if (!RespawnConfig.bCanRespawn || RespawnConfig.RespawnTime <= 0.0f)
 	{
 		return;
 	}
 
 	SetChestState(EChestState::CS_Respawning);
 
-	GetWorld()->GetTimerManager().SetTimer(
+	GetWorldTimerManager().SetTimer(
 		RespawnTimer,
 		this,
 		&ALootChest::HandleRespawn,
-		Config.RespawnTime,
+		RespawnConfig.RespawnTime,
 		false
 	);
 
-	UE_LOG(LogLootChest, Log, TEXT("%s: Will respawn in %.1f seconds"),
-		*GetName(), Config.RespawnTime);
+	UE_LOG(LogLootChest, Log, TEXT("%s: Respawn timer started (%.1fs)"),
+		*GetName(), RespawnConfig.RespawnTime);
 }
 
 void ALootChest::HandleRespawn()
 {
-	// Clear previous loot batch
-	LastLootBatch.Clear();
+	// Reset loot component source if needed
+	if (RespawnConfig.bRerollLootOnRespawn && LootComponent)
+	{
+		// The component will generate new loot on next interaction
+		// No action needed here - it uses fresh random seeds each time
+	}
 
-	// Reset animation
-	OpenAnimationProgress = 0.0f;
+	// Reset state
+	LastInteractor = nullptr;
+	LastLootBatch = FLootResultBatch();
 
-	// Reset to closed state
 	SetChestState(EChestState::CS_Closed);
 
 	// Broadcast event
 	OnChestRespawned();
 
 	UE_LOG(LogLootChest, Log, TEXT("%s: Respawned"), *GetName());
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// NETWORKING
-// ═══════════════════════════════════════════════════════════════════════
-
-void ALootChest::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(ALootChest, ChestState);
-}
-
-void ALootChest::OnRep_ChestState()
-{
-	// Update visuals when state replicates
-	UpdateMeshForState();
-	UpdateInteractionForState();
 }

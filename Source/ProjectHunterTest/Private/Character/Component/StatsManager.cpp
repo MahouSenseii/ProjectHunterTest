@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Character/Component/StatsManager.cpp
 
 #include "Character/Component/StatsManager.h"
 #include "AbilitySystem/HunterAttributeSet.h"
@@ -9,9 +9,6 @@
 #include "Item/ItemInstance.h"
 #include "Item/Library/ItemStructs.h"
 #include "Item/Library/AffixEnums.h"
-
-class UBaseStatsData;
-class IAbilitySystemInterface;
 
 UStatsManager::UStatsManager()
 {
@@ -48,7 +45,7 @@ void UStatsManager::BeginPlay()
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
-/* EQUIPMENT INTEGRATION */
+/* EQUIPMENT INTEGRATION                                                   */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
 void UStatsManager::ApplyEquipmentStats(UItemInstance* Item)
@@ -191,9 +188,14 @@ FGameplayEffectSpecHandle UStatsManager::CreateEquipmentEffect(UItemInstance* It
 		return FGameplayEffectSpecHandle();
 	}
 
-	// Create a dynamic gameplay effect
-	UGameplayEffect* Effect = NewObject<UGameplayEffect>(GetTransientPackage(), FName(TEXT("EquipmentEffect")));
-	Effect->DurationPolicy = EGameplayEffectDurationType::Infinite; // Lasts until removed
+	// FIX: Use unique names based on item GUID to prevent naming collisions
+	// Old code used same name for all items, causing issues when multiple items equipped
+	FName EffectName = FName(*FString::Printf(TEXT("EquipEffect_%s"), *Item->UniqueID.ToString()));
+	
+	// Create the effect as a subobject of the owner (not transient package)
+	// This ensures proper garbage collection and avoids naming conflicts
+	UGameplayEffect* Effect = NewObject<UGameplayEffect>(GetOwner(), EffectName);
+	Effect->DurationPolicy = EGameplayEffectDurationType::Infinite;
 	Effect->StackingType = EGameplayEffectStackingType::None;
 
 	// Add modifiers for each stat on the item (BEFORE creating spec)
@@ -215,12 +217,11 @@ FGameplayEffectSpecHandle UStatsManager::CreateEquipmentEffect(UItemInstance* It
 
 		if (!Attribute.IsValid())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("StatsManager: Invalid attribute for stat (AttributeName: %s)"), 
+			UE_LOG(LogTemp, Warning, TEXT("StatsManager: Invalid attribute for stat '%s'"), 
 				*Stat.AttributeName.ToString());
 			continue;
 		}
 
-		// Apply stat based on ModifyType
 		if (ApplyStatModifier(Effect, Stat, Attribute))
 		{
 			ModifiersAdded++;
@@ -229,21 +230,26 @@ FGameplayEffectSpecHandle UStatsManager::CreateEquipmentEffect(UItemInstance* It
 
 	if (ModifiersAdded == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("StatsManager: No valid modifiers added for %s"), *Item->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("StatsManager: No valid modifiers for item %s"), *Item->GetName());
+		return FGameplayEffectSpecHandle();
 	}
 
-	// Create effect spec AFTER adding modifiers
+	// Create effect context
 	FGameplayEffectContextHandle EffectContext = ASC->MakeEffectContext();
-	EffectContext.AddSourceObject(Item); // Track which item created this effect
+	EffectContext.AddSourceObject(Item);
+
+	// Create spec
+	FGameplayEffectSpec* Spec = new FGameplayEffectSpec(Effect, EffectContext, 1.0f);
 	
-	// Create spec from effect instance (not class)
-	FGameplayEffectSpec* EffectSpec = new FGameplayEffectSpec(Effect, EffectContext, 1.0f);
-	return FGameplayEffectSpecHandle(EffectSpec);
+	UE_LOG(LogTemp, Verbose, TEXT("StatsManager: Created effect '%s' with %d modifiers"), 
+		*EffectName.ToString(), ModifiersAdded);
+
+	return FGameplayEffectSpecHandle(Spec);
 }
 
 bool UStatsManager::ApplyStatModifier(UGameplayEffect* Effect, const FPHAttributeData& Stat, const FGameplayAttribute& Attribute)
 {
-	if (!Effect || !Attribute.IsValid() || Stat.RolledStatValue == 0.0f)
+	if (!Effect || !Attribute.IsValid())
 	{
 		return false;
 	}
@@ -255,40 +261,26 @@ bool UStatsManager::ApplyStatModifier(UGameplayEffect* Effect, const FPHAttribut
 	switch (Stat.ModifyType)
 	{
 	case EModifyType::MT_Add:
-		// Flat addition (e.g., +50 Strength)
 		ModOp = EGameplayModOp::Additive;
 		break;
 
 	case EModifyType::MT_Multiply:
-	case EModifyType::MT_Increased:
-		
-		// Percentage (e.g., +75% increased damage)
-		// GAS handles this as multiplicative
+		// Multiplicative: multiply base by (1 + value)
 		ModOp = EGameplayModOp::Multiplicitive;
-		// Convert to multiplier (75% = 1.75)
-		FinalValue = 1.0f + (Stat.RolledStatValue / 100.0f);
+		FinalValue = 1.0f + (FinalValue / 100.0f);
 		break;
 
 	case EModifyType::MT_More:
-		// More multiplier (e.g., 50% more damage)
+		// "More" in PoE terms = separate multiplier
 		ModOp = EGameplayModOp::Multiplicitive;
-		FinalValue = 1.0f + (Stat.RolledStatValue / 100.0f);
-		break;
-
-	case EModifyType::MT_Reduced:
-	case EModifyType::MT_Less:
-		// Negative multiplier (e.g., 25% reduced)
-		ModOp = EGameplayModOp::Multiplicitive;
-		FinalValue = 1.0f - (Stat.RolledStatValue / 100.0f);
+		FinalValue = 1.0f + (FinalValue / 100.0f);
 		break;
 
 	case EModifyType::MT_Override:
-		// Override value completely
 		ModOp = EGameplayModOp::Override;
 		break;
 
 	default:
-		// Unsupported modifier type for equipment stats
 		UE_LOG(LogTemp, Warning, TEXT("StatsManager: Unsupported ModifyType %d for attribute %s"), 
 			static_cast<int32>(Stat.ModifyType), *Attribute.GetName());
 		return false;
@@ -310,7 +302,7 @@ bool UStatsManager::ApplyStatModifier(UGameplayEffect* Effect, const FPHAttribut
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
-/* INTERNAL HELPERS */
+/* INTERNAL HELPERS                                                        */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
 UHunterAttributeSet* UStatsManager::GetAttributeSet() const
@@ -352,7 +344,7 @@ UAbilitySystemComponent* UStatsManager::GetAbilitySystemComponent() const
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
-/* PRIMARY ATTRIBUTES (7) */
+/* PRIMARY ATTRIBUTES (7)                                                  */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
 float UStatsManager::GetStrength() const
@@ -397,36 +389,60 @@ float UStatsManager::GetCovenant() const
 	return AttrSet ? AttrSet->GetCovenant() : 0.0f;
 }
 
-float UStatsManager::GetPrimaryAttribute(FName AttributeName) const
+/* ═══════════════════════════════════════════════════════════════════════ */
+/* SECONDARY/DERIVED ATTRIBUTES                                            */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+float UStatsManager::GetMagicFind() const
 {
-	if (AttributeName == "Strength") return GetStrength();
-	if (AttributeName == "Intelligence") return GetIntelligence();
-	if (AttributeName == "Dexterity") return GetDexterity();
-	if (AttributeName == "Endurance") return GetEndurance();
-	if (AttributeName == "Affliction") return GetAffliction();
-	if (AttributeName == "Luck") return GetLuck();
-	if (AttributeName == "Covenant") return GetCovenant();
+	UHunterAttributeSet* AttrSet = GetAttributeSet();
+	if (!AttrSet)
+	{
+		return 0.0f;
+	}
+
+	// FIX: Added GetMagicFind() for loot system integration
+	// If MagicFind attribute exists in your AttributeSet, use it directly:
+	// return AttrSet->GetMagicFind();
 	
+	// Otherwise, derive from Luck (common ARPG formula)
+	// MagicFind = Luck * 0.5 (each point of luck gives 0.5% magic find)
+	// You may want to add a dedicated MagicFind attribute to HunterAttributeSet
+	return GetLuck() * 0.5f;
+}
+
+float UStatsManager::GetItemFind() const
+{
+	UHunterAttributeSet* AttrSet = GetAttributeSet();
+	if (!AttrSet)
+	{
+		return 0.0f;
+	}
+
+	// Similar to MagicFind - derive from Luck or use dedicated attribute
+	return GetLuck() * 0.25f;
+}
+
+float UStatsManager::GetGoldFind() const
+{
+	UHunterAttributeSet* AttrSet = GetAttributeSet();
+	if (!AttrSet)
+	{
+		return 0.0f;
+	}
+
+	// Derive from Luck
+	return GetLuck() * 0.75f;
+}
+
+float UStatsManager::GetExperienceBonus() const
+{
+	// Could be derived from Intelligence or a dedicated attribute
 	return 0.0f;
 }
 
-TMap<FName, float> UStatsManager::GetAllPrimaryAttributes() const
-{
-	TMap<FName, float> Attributes;
-
-	Attributes.Add("Strength", GetStrength());
-	Attributes.Add("Intelligence", GetIntelligence());
-	Attributes.Add("Dexterity", GetDexterity());
-	Attributes.Add("Endurance", GetEndurance());
-	Attributes.Add("Affliction", GetAffliction());
-	Attributes.Add("Luck", GetLuck());
-	Attributes.Add("Covenant", GetCovenant());
-
-	return Attributes;
-}
-
 /* ═══════════════════════════════════════════════════════════════════════ */
-/* VITAL ATTRIBUTES (Most Used) */
+/* VITAL ATTRIBUTES                                                        */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
 float UStatsManager::GetHealth() const
@@ -438,17 +454,13 @@ float UStatsManager::GetHealth() const
 float UStatsManager::GetMaxHealth() const
 {
 	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetMaxHealth() : 1.0f;
+	return AttrSet ? AttrSet->GetMaxHealth() : 0.0f;
 }
 
 float UStatsManager::GetHealthPercent() const
 {
-	float MaxHP = GetMaxHealth();
-	if (MaxHP > 0.0f)
-	{
-		return GetHealth() / MaxHP;
-	}
-	return 0.0f;
+	float Max = GetMaxHealth();
+	return Max > 0.0f ? GetHealth() / Max : 0.0f;
 }
 
 float UStatsManager::GetMana() const
@@ -460,17 +472,13 @@ float UStatsManager::GetMana() const
 float UStatsManager::GetMaxMana() const
 {
 	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetMaxMana() : 1.0f;
+	return AttrSet ? AttrSet->GetMaxMana() : 0.0f;
 }
 
 float UStatsManager::GetManaPercent() const
 {
-	float MaxMP = GetMaxMana();
-	if (MaxMP > 0.0f)
-	{
-		return GetMana() / MaxMP;
-	}
-	return 0.0f;
+	float Max = GetMaxMana();
+	return Max > 0.0f ? GetMana() / Max : 0.0f;
 }
 
 float UStatsManager::GetStamina() const
@@ -482,184 +490,13 @@ float UStatsManager::GetStamina() const
 float UStatsManager::GetMaxStamina() const
 {
 	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetMaxStamina() : 1.0f;
+	return AttrSet ? AttrSet->GetMaxStamina() : 0.0f;
 }
 
 float UStatsManager::GetStaminaPercent() const
 {
-	float MaxStam = GetMaxStamina();
-	if (MaxStam > 0.0f)
-	{
-		return GetStamina() / MaxStam;
-	}
-	return 0.0f;
-}
-
-float UStatsManager::GetArcaneShield() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetArcaneShield() : 0.0f;
-}
-
-float UStatsManager::GetMaxArcaneShield() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetMaxArcaneShield() : 0.0f;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/* COMBAT STATS                                                            */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-void UStatsManager::GetPhysicalDamageRange(float& OutMin, float& OutMax) const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	if (AttrSet)
-	{
-		OutMin = AttrSet->GetMinPhysicalDamage();
-		OutMax = AttrSet->GetMaxPhysicalDamage();
-	}
-	else
-	{
-		OutMin = 0.0f;
-		OutMax = 0.0f;
-	}
-}
-
-void UStatsManager::GetElementalDamageRange(float& OutFireMin, float& OutFireMax,
-                                             float& OutIceMin, float& OutIceMax,
-                                             float& OutLightningMin, float& OutLightningMax) const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	if (AttrSet)
-	{
-		OutFireMin = AttrSet->GetMinFireDamage();
-		OutFireMax = AttrSet->GetMaxFireDamage();
-		OutIceMin = AttrSet->GetMinIceDamage();
-		OutIceMax = AttrSet->GetMaxIceDamage();
-		OutLightningMin = AttrSet->GetMinLightningDamage();
-		OutLightningMax = AttrSet->GetMaxLightningDamage();
-	}
-	else
-	{
-		OutFireMin = OutFireMax = 0.0f;
-		OutIceMin = OutIceMax = 0.0f;
-		OutLightningMin = OutLightningMax = 0.0f;
-	}
-}
-
-float UStatsManager::GetCriticalStrikeChance() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetCritChance() : 0.0f;
-}
-
-float UStatsManager::GetCriticalStrikeMultiplier() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetCritMultiplier() : 150.0f;
-}
-
-float UStatsManager::GetAttackSpeed() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetAttackSpeed() : 100.0f;
-}
-
-float UStatsManager::GetCastSpeed() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetCastSpeed() : 100.0f;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/* DEFENSE STATS                                                           */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-float UStatsManager::GetArmor() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetArmour() : 0.0f;  // Note: British spelling "Armour" in AttributeSet
-}
-
-float UStatsManager::GetBlockStrength() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetBlockStrength() : 0.0f;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/* RESISTANCES (Flat + Percent)                                            */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-float UStatsManager::GetFireResistanceFlat() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetFireResistanceFlatBonus() : 0.0f;
-}
-
-float UStatsManager::GetFireResistancePercent() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetFireResistancePercentBonus() : 0.0f;
-}
-
-float UStatsManager::GetIceResistanceFlat() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetIceResistanceFlatBonus() : 0.0f;
-}
-
-float UStatsManager::GetIceResistancePercent() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetIceResistancePercentBonus() : 0.0f;
-}
-
-float UStatsManager::GetLightningResistanceFlat() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetLightningResistanceFlatBonus() : 0.0f;
-}
-
-float UStatsManager::GetLightningResistancePercent() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetLightningResistancePercentBonus() : 0.0f;
-}
-
-float UStatsManager::GetLightResistanceFlat() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetLightResistanceFlatBonus() : 0.0f;
-}
-
-float UStatsManager::GetLightResistancePercent() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetLightResistancePercentBonus() : 0.0f;
-}
-
-float UStatsManager::GetCorruptionResistanceFlat() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetCorruptionResistanceFlatBonus() : 0.0f;
-}
-
-float UStatsManager::GetCorruptionResistancePercent() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetCorruptionResistancePercentBonus() : 0.0f;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/* MOVEMENT                                                                */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-float UStatsManager::GetMovementSpeed() const
-{
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	return AttrSet ? AttrSet->GetMovementSpeed() : 100.0f;
+	float Max = GetMaxStamina();
+	return Max > 0.0f ? GetStamina() / Max : 0.0f;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
@@ -668,12 +505,6 @@ float UStatsManager::GetMovementSpeed() const
 
 float UStatsManager::GetAttributeByName(FName AttributeName) const
 {
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	if (!AttrSet)
-	{
-		return 0.0f;
-	}
-
 	UAbilitySystemComponent* ASC = GetAbilitySystemComponent();
 	if (!ASC)
 	{
@@ -681,112 +512,45 @@ float UStatsManager::GetAttributeByName(FName AttributeName) const
 	}
 
 	FGameplayAttribute Attribute = UHunterAttributeSet::FindAttributeByName(AttributeName);
-	
-	if (Attribute.IsValid())
+	if (!Attribute.IsValid())
 	{
-		return ASC->GetNumericAttribute(Attribute);
+		return 0.0f;
 	}
 
-	return 0.0f;
+	return ASC->GetNumericAttribute(Attribute);
 }
 
-TMap<FName, float> UStatsManager::GetAllAttributes() const
+bool UStatsManager::MeetsStatRequirements(const TMap<FName, float>& Requirements) const
 {
-	TMap<FName, float> Attributes;
-	UHunterAttributeSet* AttrSet = GetAttributeSet();
-	UAbilitySystemComponent* ASC = GetAbilitySystemComponent();
-
-	if (!AttrSet || !ASC)
+	for (const TPair<FName, float>& Requirement : Requirements)
 	{
-		return Attributes;
+		float CurrentValue = GetAttributeByName(Requirement.Key);
+		
+		if (CurrentValue < Requirement.Value)
+		{
+			return false;
+		}
 	}
 
-	TArray<FGameplayAttribute> AllAttributes;
-	AttrSet->GetAllAttributes(AllAttributes);
-
-	for (const FGameplayAttribute& Attribute : AllAttributes)
-	{
-		FString AttributeName = Attribute.GetName();
-		float Value = ASC->GetNumericAttribute(Attribute);
-		Attributes.Add(FName(*AttributeName), Value);
-	}
-
-	return Attributes;
+	return true;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
-/* STAT CALCULATIONS                                                       */
+/* POWER CALCULATIONS                                                      */
 /* ═══════════════════════════════════════════════════════════════════════ */
-
-float UStatsManager::CalculateArmorReduction(float IncomingDamage) const
-{
-	float Armor = GetArmor();
-	
-	if (Armor <= 0.0f || IncomingDamage <= 0.0f)
-	{
-		return IncomingDamage;
-	}
-
-	float Reduction = Armor / (Armor + 10.0f * IncomingDamage);
-	float ReducedDamage = IncomingDamage * (1.0f - Reduction);
-
-	return FMath::Max(ReducedDamage, 0.0f);
-}
-
-float UStatsManager::CalculateEffectiveHealth() const
-{
-	float HP = GetMaxHealth();
-	float Armor = GetArmor();
-
-	float ArmorMultiplier = 1.0f + (Armor / 100.0f);
-
-	return HP * ArmorMultiplier;
-}
-
-float UStatsManager::CalculateTotalDPS() const
-{
-	float MinPhys, MaxPhys;
-	GetPhysicalDamageRange(MinPhys, MaxPhys);
-	
-	float MinFire, MaxFire, MinIce, MaxIce, MinLight, MaxLight;
-	GetElementalDamageRange(MinFire, MaxFire, MinIce, MaxIce, MinLight, MaxLight);
-
-	float AvgPhysDamage = (MinPhys + MaxPhys) / 2.0f;
-	float AvgFireDamage = (MinFire + MaxFire) / 2.0f;
-	float AvgIceDamage = (MinIce + MaxIce) / 2.0f;
-	float AvgLightDamage = (MinLight + MaxLight) / 2.0f;
-	
-	float TotalAvgDamage = AvgPhysDamage + AvgFireDamage + AvgIceDamage + AvgLightDamage;
-
-	float CritChance = GetCriticalStrikeChance() / 100.0f;
-	float CritMult = GetCriticalStrikeMultiplier() / 100.0f;
-	
-	float CritMultiplier = 1.0f + (CritChance * (CritMult - 1.0f));
-	TotalAvgDamage *= CritMultiplier;
-
-	float AttackSpeed = GetAttackSpeed() / 100.0f;
-	float BaseAttacksPerSecond = 1.0f;
-	float ActualAttacksPerSecond = BaseAttacksPerSecond * AttackSpeed;
-
-	return TotalAvgDamage * ActualAttacksPerSecond;
-}
 
 float UStatsManager::GetPowerLevel() const
 {
-	float OffensivePower = CalculateTotalDPS();
-	float DefensivePower = CalculateEffectiveHealth() / 100.0f;
-
-	float TotalPrimaryStats = GetStrength() + GetIntelligence() + GetDexterity() + 
-	                          GetEndurance() + GetAffliction() + GetLuck() + GetCovenant();
-
-	return (OffensivePower + DefensivePower + TotalPrimaryStats) / 10.0f;
+	// Simple power calculation based on primary stats
+	float TotalPrimary = GetStrength() + GetIntelligence() + GetDexterity() + 
+	                     GetEndurance() + GetAffliction() + GetLuck() + GetCovenant();
+	
+	float VitalBonus = GetMaxHealth() * 0.01f + GetMaxMana() * 0.01f;
+	
+	return TotalPrimary + VitalBonus;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════ */
-/* STAT COMPARISONS                                                        */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-float UStatsManager::CompareStatsWithCharacter(AActor* OtherActor) const
+float UStatsManager::GetPowerRatioAgainst(AActor* OtherActor) const
 {
 	if (!OtherActor)
 	{
@@ -808,21 +572,6 @@ float UStatsManager::CompareStatsWithCharacter(AActor* OtherActor) const
 	}
 
 	return MyPower / TheirPower;
-}
-
-bool UStatsManager::MeetsStatRequirements(const TMap<FName, float>& Requirements) const
-{
-	for (const TPair<FName, float>& Requirement : Requirements)
-	{
-		float CurrentValue = GetAttributeByName(Requirement.Key);
-		
-		if (CurrentValue < Requirement.Value)
-		{
-			return false;
-		}
-	}
-
-	return true;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */

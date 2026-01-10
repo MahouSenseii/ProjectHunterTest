@@ -504,12 +504,9 @@ struct FPHAttributeData : public FTableRowBase
 
 	/**
 	 * Check if this affix is allowed on given item type
-	 * @param ItemType - Item type to check
-	 * @return True if allowed (or no restrictions)
 	 */
 	bool IsAllowedOnItemType(EItemType ItemType) const
 	{
-		// Empty array = allowed on all types
 		if (AllowedItemTypes.Num() == 0)
 		{
 			return true;
@@ -519,12 +516,9 @@ struct FPHAttributeData : public FTableRowBase
 
 	/**
 	 * Check if this affix is allowed on given item subtype
-	 * @param ItemSubType - Item subtype to check
-	 * @return True if allowed (or no restrictions)
 	 */
 	bool IsAllowedOnSubType(EItemSubType ItemSubType) const
 	{
-		// Empty array = allowed on all subtypes
 		if (AllowedSubTypes.Num() == 0)
 		{
 			return true;
@@ -535,36 +529,32 @@ struct FPHAttributeData : public FTableRowBase
 	/**
 	 * Get weight for random selection (inverse of RankPoints)
 	 * Higher tier = rarer = lower weight
-	 * @return Weight value (1-1000)
 	 */
 	int32 GetWeight() const
 	{
 		int32 RankValue = GetRankPointsValue(RankPoints);
 		
-		// Inverse formula: Higher tier = Lower weight
-		// RP_1 (Tier 1) = Weight 1000 (very common)
-		// RP_5 (Tier 5) = Weight 100 (common)
-		// RP_10 (Tier 10) = Weight 10 (very rare)
-		
 		if (RankValue <= 0)
 		{
-			// Cursed affixes (negative RP) are very rare
 			return 1;
 		}
 		
-		// Formula: 1000 / (RankValue)
-		// Clamp between 1 and 1000
 		int32 Weight = 1000 / FMath::Max(1, RankValue);
 		return FMath::Clamp(Weight, 1, 1000);
 	}
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// ITEM STATS (Collection of Affixes)
+// ITEM STATS (Collection of Affixes) - OPTIMIZED
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
  * All stats/affixes on an item
+ * 
+ * OPTIMIZATIONS:
+ * - GetAllStats() pre-allocates with Reserve()
+ * - ForEachStat() for zero-allocation iteration
+ * - Early-exit in HasUnidentifiedStats()
  */
 USTRUCT(BlueprintType)
 struct FPHItemStats
@@ -588,9 +578,17 @@ struct FPHItemStats
 
 	FPHItemStats() = default;
 
+	/** Get total count of all stats (zero allocation) */
+	FORCEINLINE int32 GetTotalStatCount() const
+	{
+		return Implicits.Num() + Prefixes.Num() + Suffixes.Num() + Crafted.Num();
+	}
+
+	/** Get all stats combined - OPTIMIZED with Reserve() */
 	TArray<FPHAttributeData> GetAllStats() const
 	{
 		TArray<FPHAttributeData> All;
+		All.Reserve(GetTotalStatCount());
 		All.Append(Implicits);
 		All.Append(Prefixes);
 		All.Append(Suffixes);
@@ -598,31 +596,99 @@ struct FPHItemStats
 		return All;
 	}
 
+	/** Zero-allocation iteration over all stats */
+	template<typename Func>
+	void ForEachStat(Func&& Callback) const
+	{
+		for (const FPHAttributeData& Stat : Implicits) { Callback(Stat); }
+		for (const FPHAttributeData& Stat : Prefixes) { Callback(Stat); }
+		for (const FPHAttributeData& Stat : Suffixes) { Callback(Stat); }
+		for (const FPHAttributeData& Stat : Crafted) { Callback(Stat); }
+	}
+
+	/** Zero-allocation iteration with index */
+	template<typename Func>
+	void ForEachStatIndexed(Func&& Callback) const
+	{
+		int32 Index = 0;
+		for (const FPHAttributeData& Stat : Implicits) { Callback(Stat, Index++); }
+		for (const FPHAttributeData& Stat : Prefixes) { Callback(Stat, Index++); }
+		for (const FPHAttributeData& Stat : Suffixes) { Callback(Stat, Index++); }
+		for (const FPHAttributeData& Stat : Crafted) { Callback(Stat, Index++); }
+	}
+
+	/** Zero-allocation find with predicate */
+	template<typename Predicate>
+	const FPHAttributeData* FindStat(Predicate&& Pred) const
+	{
+		for (const FPHAttributeData& Stat : Implicits) { if (Pred(Stat)) return &Stat; }
+		for (const FPHAttributeData& Stat : Prefixes) { if (Pred(Stat)) return &Stat; }
+		for (const FPHAttributeData& Stat : Suffixes) { if (Pred(Stat)) return &Stat; }
+		for (const FPHAttributeData& Stat : Crafted) { if (Pred(Stat)) return &Stat; }
+		return nullptr;
+	}
+
+	/** Find stat by name */
+	const FPHAttributeData* FindStatByName(FName AttributeName) const
+	{
+		return FindStat([AttributeName](const FPHAttributeData& Stat) {
+			return Stat.AttributeName == AttributeName;
+		});
+	}
+
+	/** Get affix count (prefixes + suffixes only) */
 	int32 GetTotalAffixCount() const
 	{
 		return Prefixes.Num() + Suffixes.Num();
 	}
 
+	/** Check for unidentified stats - OPTIMIZED with early exit */
 	bool HasUnidentifiedStats() const
 	{
-		for (const FPHAttributeData& Stat : GetAllStats())
-		{
-			if (!Stat.bIsIdentified)
-			{
-				return true;
-			}
-		}
+		for (const FPHAttributeData& Stat : Implicits) { if (!Stat.bIsIdentified) return true; }
+		for (const FPHAttributeData& Stat : Prefixes) { if (!Stat.bIsIdentified) return true; }
+		for (const FPHAttributeData& Stat : Suffixes) { if (!Stat.bIsIdentified) return true; }
+		for (const FPHAttributeData& Stat : Crafted) { if (!Stat.bIsIdentified) return true; }
 		return false;
 	}
 
+	/** Total rank point value - OPTIMIZED with ForEachStat */
 	float GetTotalAffixValue() const
 	{
 		float Total = 0.0f;
-		for (const FPHAttributeData& Stat : GetAllStats())
-		{
+		ForEachStat([&Total](const FPHAttributeData& Stat) {
 			Total += Stat.GetRankPointValue();
-		}
+		});
 		return Total;
+	}
+
+	/** Sum all bonuses for a specific attribute */
+	float GetTotalValueForAttribute(FName AttributeName) const
+	{
+		float Total = 0.0f;
+		ForEachStat([&Total, AttributeName](const FPHAttributeData& Stat) {
+			if (Stat.AttributeName == AttributeName && Stat.bIsIdentified)
+			{
+				Total += Stat.RolledStatValue;
+			}
+		});
+		return Total;
+	}
+
+	/** Check if empty */
+	bool IsEmpty() const
+	{
+		return GetTotalStatCount() == 0;
+	}
+
+	/** Clear all stats */
+	void Clear()
+	{
+		Implicits.Empty();
+		Prefixes.Empty();
+		Suffixes.Empty();
+		Crafted.Empty();
+		bAffixesGenerated = false;
 	}
 };
 
@@ -695,7 +761,7 @@ struct FItemBase : public FTableRowBase
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	bool bUseWeaponActor = false;
 
-	UPROPERTY(EditAnywhere, Category = "Combat", meta = (EditCondition = "bUseWeaponActor", EditConditionHides) )
+	UPROPERTY(EditAnywhere, Category = "Combat", meta = (EditCondition = "bUseWeaponActor", EditConditionHides))
 	TSubclassOf<AActor> WeaponActorClass = nullptr;
 
 	// ═══════════════════════════════════════════════
@@ -853,7 +919,7 @@ struct FItemBase : public FTableRowBase
 			|| ItemType == EItemType::IT_Accessory;
 	}
 
-	/** Get socket name for context (e.g., different sockets when standing vs running) */
+	/** Get socket name for context */
 	FName GetSocketForContext(FName Context) const
 	{
 		if (const FName* ContextSocket = ContextualSockets.Find(Context))
@@ -871,10 +937,8 @@ struct FItemBase : public FTableRowBase
 	{
 		float CalcValue = static_cast<float>(Value) * (1.0f + ValueModifier);
 
-		// Use instance rarity if provided, otherwise use base rarity
 		const EItemRarity RarityToUse = (InstanceRarity != EItemRarity::IR_None) ? InstanceRarity : ItemRarity;
 
-		// Hunter Manga: Grade-based value multipliers
 		float RarityMult = 1.0f;
 		switch (RarityToUse)
 		{
@@ -885,12 +949,11 @@ struct FItemBase : public FTableRowBase
 			case EItemRarity::IR_GradeB:  RarityMult = 10.0f; break;
 			case EItemRarity::IR_GradeA:  RarityMult = 25.0f; break;
 			case EItemRarity::IR_GradeS:  RarityMult = 100.0f; break;
-			case EItemRarity::IR_GradeSS: RarityMult = 1000.0f; break;  // EX-Rank!
+			case EItemRarity::IR_GradeSS: RarityMult = 1000.0f; break;
 			default: break;
 		}
 		CalcValue *= RarityMult;
 
-		// Multiply by quantity for stackables
 		if (bStackable)
 		{
 			CalcValue *= FMath::Max(1, Quantity);

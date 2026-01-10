@@ -1,3 +1,4 @@
+// Character/Component/StatsManager.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -42,7 +43,7 @@ public:
 	virtual void BeginPlay() override;
 
 	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* EQUIPMENT INTEGRATION (Required by EquipmentManager) */
+	/* EQUIPMENT INTEGRATION (Required by EquipmentManager)                    */
 	/* ═══════════════════════════════════════════════════════════════════════ */
 
 	/**
@@ -76,256 +77,132 @@ public:
 	bool HasEquipmentStatsApplied(UItemInstance* Item) const;
 
 	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* PRIMARY ATTRIBUTES */
+	/* PRIMARY ATTRIBUTES (7)                                                  */
 	/* ═══════════════════════════════════════════════════════════════════════ */
 
-	/** Get Strength attribute value */
 	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
 	float GetStrength() const;
 
-	/** Get Intelligence attribute value */
 	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
 	float GetIntelligence() const;
 
-	/** Get Dexterity attribute value */
 	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
 	float GetDexterity() const;
 
-	/** Get Endurance attribute value */
 	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
 	float GetEndurance() const;
 
-	/** Get Affliction attribute value */
 	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
 	float GetAffliction() const;
 
-	/** Get Luck attribute value */
 	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
 	float GetLuck() const;
 
-	/** Get Covenant attribute value */
 	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
 	float GetCovenant() const;
 
-	/** Get any primary attribute by name */
-	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
-	float GetPrimaryAttribute(FName AttributeName) const;
-
-	/** Get all primary attributes as map */
-	UFUNCTION(BlueprintPure, Category = "Stats|Primary")
-	TMap<FName, float> GetAllPrimaryAttributes() const;
-
 	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* VITAL ATTRIBUTES (Health, Mana, Stamina, etc.) */
-	/* ═══════════════════════════════════════════════════════════════════════ */
-
-	/** Get current health */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetHealth() const;
-
-	/** Get max health */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetMaxHealth() const;
-
-	/** Get health percent (0.0 - 1.0) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetHealthPercent() const;
-
-	/** Get current mana */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetMana() const;
-
-	/** Get max mana */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetMaxMana() const;
-
-	/** Get mana percent (0.0 - 1.0) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetManaPercent() const;
-
-	/** Get current stamina */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetStamina() const;
-
-	/** Get max stamina */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetMaxStamina() const;
-
-	/** Get stamina percent (0.0 - 1.0) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetStaminaPercent() const;
-
-	/** Get current arcane shield */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetArcaneShield() const;
-
-	/** Get max arcane shield */
-	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
-	float GetMaxArcaneShield() const;
-
-	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* COMBAT STATS */
-	/* ═══════════════════════════════════════════════════════════════════════ */
-
-	/** Get physical damage (min-max range) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Combat")
-	void GetPhysicalDamageRange(float& OutMin, float& OutMax) const;
-
-	/** Get elemental damage (fire, ice, lightning) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Combat")
-	void GetElementalDamageRange(float& OutFireMin, float& OutFireMax,
-	                              float& OutIceMin, float& OutIceMax,
-	                              float& OutLightningMin, float& OutLightningMax) const;
-
-	/** Get critical strike chance */
-	UFUNCTION(BlueprintPure, Category = "Stats|Combat")
-	float GetCriticalStrikeChance() const;
-
-	/** Get critical strike multiplier */
-	UFUNCTION(BlueprintPure, Category = "Stats|Combat")
-	float GetCriticalStrikeMultiplier() const;
-
-	/** Get attack speed multiplier */
-	UFUNCTION(BlueprintPure, Category = "Stats|Combat")
-	float GetAttackSpeed() const;
-
-	/** Get cast speed multiplier */
-	UFUNCTION(BlueprintPure, Category = "Stats|Combat")
-	float GetCastSpeed() const;
-
-	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* DEFENSE STATS */
-	/* ═══════════════════════════════════════════════════════════════════════ */
-
-	/** Get armor value */
-	UFUNCTION(BlueprintPure, Category = "Stats|Defense")
-	float GetArmor() const;
-
-	/** Get block strength */
-	UFUNCTION(BlueprintPure, Category = "Stats|Defense")
-	float GetBlockStrength() const;
-
-	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* RESISTANCES (Flat + Percent for each element) */
-	/* ═══════════════════════════════════════════════════════════════════════ */
-
-	/** Get fire resistance (flat bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetFireResistanceFlat() const;
-
-	/** Get fire resistance (percent bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetFireResistancePercent() const;
-
-	/** Get ice resistance (flat bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetIceResistanceFlat() const;
-
-	/** Get ice resistance (percent bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetIceResistancePercent() const;
-
-	/** Get lightning resistance (flat bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetLightningResistanceFlat() const;
-
-	/** Get lightning resistance (percent bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetLightningResistancePercent() const;
-
-	/** Get light resistance (flat bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetLightResistanceFlat() const;
-
-	/** Get light resistance (percent bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetLightResistancePercent() const;
-
-	/** Get corruption resistance (flat bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetCorruptionResistanceFlat() const;
-
-	/** Get corruption resistance (percent bonus) */
-	UFUNCTION(BlueprintPure, Category = "Stats|Resistance")
-	float GetCorruptionResistancePercent() const;
-
-	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* MOVEMENT */
-	/* ═══════════════════════════════════════════════════════════════════════ */
-
-	/** Get movement speed */
-	UFUNCTION(BlueprintPure, Category = "Stats|Movement")
-	float GetMovementSpeed() const;
-
-	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* GENERIC ATTRIBUTE ACCESS */
+	/* SECONDARY/DERIVED ATTRIBUTES                                            */
 	/* ═══════════════════════════════════════════════════════════════════════ */
 
 	/**
-	 * Get any attribute value by name
-	 * @param AttributeName - Name of the attribute (e.g., "Strength", "Health", "CritChance")
+	 * Get Magic Find stat (affects loot quality and quantity)
+	 * FIX: Added for LootChest integration
+	 */
+	UFUNCTION(BlueprintPure, Category = "Stats|Secondary")
+	float GetMagicFind() const;
+
+	/**
+	 * Get Item Find stat (affects drop rates)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Stats|Secondary")
+	float GetItemFind() const;
+
+	/**
+	 * Get Gold Find stat (affects currency drops)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Stats|Secondary")
+	float GetGoldFind() const;
+
+	/**
+	 * Get Experience Bonus stat
+	 */
+	UFUNCTION(BlueprintPure, Category = "Stats|Secondary")
+	float GetExperienceBonus() const;
+
+	/* ═══════════════════════════════════════════════════════════════════════ */
+	/* VITAL ATTRIBUTES                                                        */
+	/* ═══════════════════════════════════════════════════════════════════════ */
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetHealth() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetMaxHealth() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetHealthPercent() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetMana() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetMaxMana() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetManaPercent() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetStamina() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetMaxStamina() const;
+
+	UFUNCTION(BlueprintPure, Category = "Stats|Vitals")
+	float GetStaminaPercent() const;
+
+	/* ═══════════════════════════════════════════════════════════════════════ */
+	/* GENERIC ATTRIBUTE ACCESS                                                */
+	/* ═══════════════════════════════════════════════════════════════════════ */
+
+	/**
+	 * Get any attribute by name
+	 * @param AttributeName - Name of the attribute (e.g., "Strength", "MagicFind")
 	 * @return Attribute value, or 0 if not found
 	 */
 	UFUNCTION(BlueprintPure, Category = "Stats")
 	float GetAttributeByName(FName AttributeName) const;
 
 	/**
-	 * Get all attributes as a map
-	 * WARNING: Expensive operation, use sparingly
+	 * Check if character meets stat requirements
+	 * @param Requirements - Map of AttributeName → RequiredValue
+	 * @return True if all requirements are met
 	 */
 	UFUNCTION(BlueprintPure, Category = "Stats")
-	TMap<FName, float> GetAllAttributes() const;
+	bool MeetsStatRequirements(const TMap<FName, float>& Requirements) const;
 
 	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* STAT CALCULATIONS */
+	/* POWER CALCULATIONS                                                      */
 	/* ═══════════════════════════════════════════════════════════════════════ */
 
 	/**
-	 * Calculate effective damage reduction from armor
-	 * @param IncomingDamage - Raw damage before armor
-	 * @return Damage after armor reduction
+	 * Calculate overall power level (for matchmaking, scaling, etc.)
+	 * @return Calculated power level
 	 */
-	UFUNCTION(BlueprintPure, Category = "Stats|Calculations")
-	float CalculateArmorReduction(float IncomingDamage) const;
-
-	/**
-	 * Calculate effective health (Health + Armor + Resistances)
-	 * Useful for AI threat assessment
-	 */
-	UFUNCTION(BlueprintPure, Category = "Stats|Calculations")
-	float CalculateEffectiveHealth() const;
-
-	/**
-	 * Calculate total DPS (Damage Per Second)
-	 * Includes physical, elemental, crit, and attack speed
-	 */
-	UFUNCTION(BlueprintPure, Category = "Stats|Calculations")
-	float CalculateTotalDPS() const;
-
-	/**
-	 * Get character "power level" (for matchmaking, difficulty scaling)
-	 * Combines level, stats, equipment quality
-	 */
-	UFUNCTION(BlueprintPure, Category = "Stats|Calculations")
+	UFUNCTION(BlueprintPure, Category = "Stats|Power")
 	float GetPowerLevel() const;
 
-	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* STAT COMPARISONS */
-	/* ═══════════════════════════════════════════════════════════════════════ */
-
 	/**
-	 * Compare stats with another character
-	 * Returns percentage difference (1.0 = equal, 1.5 = 50% stronger)
+	 * Compare power ratio with another actor
+	 * @param OtherActor - Actor to compare against
+	 * @return Ratio (>1 = stronger, <1 = weaker)
 	 */
-	UFUNCTION(BlueprintPure, Category = "Stats|Comparison")
-	float CompareStatsWithCharacter(AActor* OtherCharacter) const;
+	UFUNCTION(BlueprintPure, Category = "Stats|Power")
+	float GetPowerRatioAgainst(AActor* OtherActor) const;
 
-	/**
-	 * Check if character meets stat requirements
-	 * @param Requirements - Map of attribute names to required values
-	 */
-	UFUNCTION(BlueprintPure, Category = "Stats|Comparison")
-	bool MeetsStatRequirements(const TMap<FName, float>& Requirements) const;
+	/* ═══════════════════════════════════════════════════════════════════════ */
+	/* INITIALIZATION                                                          */
+	/* ═══════════════════════════════════════════════════════════════════════ */
 
 	/** Initialize stats from data asset */
 	void InitializeFromDataAsset(UBaseStatsData* InStatsData);
@@ -338,7 +215,7 @@ public:
 
 protected:
 	/* ═══════════════════════════════════════════════════════════════════════ */
-	/* INTERNAL HELPERS */
+	/* INTERNAL HELPERS                                                        */
 	/* ═══════════════════════════════════════════════════════════════════════ */
 
 	/** Get AttributeSet from owner */
@@ -349,6 +226,7 @@ protected:
 
 	/**
 	 * Create a gameplay effect for equipment stats
+	 * FIX: Uses unique naming based on item GUID to prevent collisions
 	 * @param Item - Item to create effect for
 	 * @param Stats - Array of FPHAttributeData from item
 	 * @return Gameplay effect spec handle

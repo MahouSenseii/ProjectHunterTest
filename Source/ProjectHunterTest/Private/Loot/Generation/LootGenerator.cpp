@@ -3,6 +3,7 @@
 #include "Loot/Generation/LootGenerator.h"
 #include "Item/ItemInstance.h"
 #include "Engine/DataTable.h"
+#include "Loot/Library/LootEnum.h"
 
 DEFINE_LOG_CATEGORY(LogLootGenerator);
 

@@ -1,25 +1,26 @@
 ﻿// Loot/Library/LootStruct.h
+
 #pragma once
 
 #include "CoreMinimal.h"
+#include "LootEnum.h"
 #include "Engine/DataTable.h"
 #include "Item/ItemInstance.h"
-#include "Loot/Library/LootEnum.h"
+#include "Item/Library/ItemStructs.h"
 #include "Item/Library/ItemEnums.h"
 #include "LootStruct.generated.h"
 
 // Forward declarations
 class UItemInstance;
 
-
 // ═══════════════════════════════════════════════════════════════════════
-// LOOT DROP SETTINGS - Generation parameters
+// LOOT DROP SETTINGS - Controls generation behavior
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * FLootDropSettings - Controls HOW loot is generated
+ * FLootDropSettings - Configuration for loot generation
  * 
- * SINGLE RESPONSIBILITY: Generation parameters only
+ * SINGLE RESPONSIBILITY: Define how loot should be generated
  */
 USTRUCT(BlueprintType)
 struct FLootDropSettings
@@ -27,50 +28,50 @@ struct FLootDropSettings
 	GENERATED_BODY()
 
 	// ═══════════════════════════════════════════════
-	// QUANTITY MODIFIERS
+	// DROP COUNTS
 	// ═══════════════════════════════════════════════
 
-	/** Minimum guaranteed drops */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantity", meta = (ClampMin = "0"))
+	/** Minimum number of drops */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drops", meta = (ClampMin = "0"))
 	int32 MinDrops = 1;
 
-	/** Maximum possible drops */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantity", meta = (ClampMin = "1"))
+	/** Maximum number of drops */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drops", meta = (ClampMin = "0"))
 	int32 MaxDrops = 3;
 
-	/** Multiplier for all drop chances */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantity", meta = (ClampMin = "0.0"))
+	/** Multiplier for drop chance */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drops", meta = (ClampMin = "0.0"))
 	float DropChanceMultiplier = 1.0f;
 
-	/** Multiplier for all quantities */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantity", meta = (ClampMin = "0.0"))
+	/** Multiplier for quantity per drop */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drops", meta = (ClampMin = "0.0"))
 	float QuantityMultiplier = 1.0f;
 
 	// ═══════════════════════════════════════════════
-	// RARITY MODIFIERS
+	// RARITY
 	// ═══════════════════════════════════════════════
 
-	/** Base rarity of this loot source */
+	/** Base rarity for this drop source */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rarity")
 	EDropRarity SourceRarity = EDropRarity::DR_Common;
 
-	/** Bonus rarity chance (increases rare drop odds) */
+	/** Bonus chance for higher rarity (0.0 - 1.0) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rarity", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float RarityBonusChance = 0.0f;
 
-	/** Force minimum rarity (IR_None = no minimum) */
+	/** Minimum item rarity that can drop */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rarity")
 	EItemRarity MinimumItemRarity = EItemRarity::IR_None;
 
 	// ═══════════════════════════════════════════════
-	// ITEM LEVEL
+	// LEVEL
 	// ═══════════════════════════════════════════════
 
-	/** Source level (affects item level generation) */
+	/** Source level (affects item level) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Level", meta = (ClampMin = "1", ClampMax = "100"))
 	int32 SourceLevel = 1;
 
-	/** Item level variance (+/- from source level) */
+	/** Level variance (+/- this value) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Level", meta = (ClampMin = "0"))
 	int32 LevelVariance = 2;
 
@@ -78,11 +79,11 @@ struct FLootDropSettings
 	// CORRUPTION
 	// ═══════════════════════════════════════════════
 
-	/** Chance for dropped items to become corrupted */
+	/** Chance for corruption (0.0 - 1.0) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float CorruptionChance = 0.0f;
 
-	/** Only drop corrupted items from this source? */
+	/** Only drop corrupted items? */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption")
 	bool bOnlyCorruptedDrops = false;
 
@@ -152,7 +153,11 @@ struct FLootSourceEntry : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Info")
 	ELootSourceType Category = ELootSourceType::LST_None;
 
-	/** Tags for filtering (e.g., "Dungeon", "Overworld", "Event") */
+	/** Source rarity (affects base drop quality) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Info")
+	EDropRarity SourceRarity = EDropRarity::DR_Common;
+
+	/** Tags for filtering */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Info")
 	TArray<FName> Tags;
 
@@ -160,44 +165,40 @@ struct FLootSourceEntry : public FTableRowBase
 	// LOOT TABLE REFERENCE
 	// ═══════════════════════════════════════════════
 
-	/** Soft reference to loot DataTable (lazy loaded) */
+	/** Reference to the loot table DataTable (lazy loaded) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
 	TSoftObjectPtr<UDataTable> LootTable;
 
-	/** Row name within the loot table (empty = use all rows) */
+	/** Specific row name in the loot table (optional) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
 	FName LootTableRowName;
 
-	// ═══════════════════════════════════════════════
-	// DEFAULT SETTINGS
-	// ═══════════════════════════════════════════════
-
 	/** Default drop settings for this source */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
 	FLootDropSettings DefaultSettings;
 
-	/** Override rarity (DR_Common = use settings) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
-	EDropRarity SourceRarity = EDropRarity::DR_Common;
+	// ═══════════════════════════════════════════════
+	// LEVEL & SCALING
+	// ═══════════════════════════════════════════════
 
-	/** Base level for item generation */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings", meta = (ClampMin = "1", ClampMax = "100"))
+	/** Base level for this source */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Level", meta = (ClampMin = "1", ClampMax = "100"))
 	int32 BaseLevel = 1;
 
 	// ═══════════════════════════════════════════════
-	// CURRENCY & REWARDS
+	// CURRENCY & EXPERIENCE
 	// ═══════════════════════════════════════════════
 
-	/** Minimum currency drop */
+	/** Minimum currency to drop */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Currency", meta = (ClampMin = "0"))
 	int32 MinCurrency = 0;
 
-	/** Maximum currency drop */
+	/** Maximum currency to drop */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Currency", meta = (ClampMin = "0"))
 	int32 MaxCurrency = 0;
 
-	/** Experience reward (for NPCs) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rewards", meta = (ClampMin = "0"))
+	/** Experience reward */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Experience", meta = (ClampMin = "0"))
 	int32 ExperienceReward = 0;
 
 	// ═══════════════════════════════════════════════
@@ -262,71 +263,71 @@ struct FLootEntry
 	// ITEM REFERENCE
 	// ═══════════════════════════════════════════════
 
-	/** Use direct class reference instead of DataTable row? */
+	/** Reference to item base in DataTable */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item")
-	bool bUseDirectClass = false;
-
-	/** Row handle to item DataTable (primary reference method) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item", meta = (EditCondition = "!bUseDirectClass"))
 	FDataTableRowHandle ItemRowHandle;
 
-	/** Direct item class reference */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item", meta = (EditCondition = "bUseDirectClass"))
+	/** Use direct class reference instead of DataTable row? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item")
 	TSubclassOf<UItemInstance> ItemClass;
-	
+
 	// ═══════════════════════════════════════════════
-	// DROP PROBABILITY
+	// DROP CHANCE & WEIGHT
 	// ═══════════════════════════════════════════════
 
-	/** Drop chance [0.0 - 1.0] (1.0 = 100% guaranteed) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Probability", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	/** Base chance to drop (0.0 - 1.0) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float DropChance = 1.0f;
 
-	/** Weight for weighted random selection (higher = more likely) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Probability", meta = (ClampMin = "0.1"))
+	/** Weight for weighted random selection */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chance", meta = (ClampMin = "0.0"))
 	float Weight = 1.0f;
 
 	// ═══════════════════════════════════════════════
 	// QUANTITY
 	// ═══════════════════════════════════════════════
 
-	/** Minimum quantity per drop */
+	/** Minimum quantity */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantity", meta = (ClampMin = "1"))
 	int32 MinQuantity = 1;
 
-	/** Maximum quantity per drop */
+	/** Maximum quantity */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantity", meta = (ClampMin = "1"))
 	int32 MaxQuantity = 1;
 
 	// ═══════════════════════════════════════════════
-	// ITEM GENERATION SETTINGS
+	// RARITY OVERRIDE
 	// ═══════════════════════════════════════════════
 
-	/** Override base rarity (IR_None = use item's default) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation")
+	/** Override rarity (IR_None = use rolled rarity) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rarity")
 	EItemRarity OverrideRarity = EItemRarity::IR_None;
 
-	/** Generate affixes for this drop? (equipment only) */
+	// ═══════════════════════════════════════════════
+	// GENERATION FLAGS
+	// ═══════════════════════════════════════════════
+
+	/** Generate affixes for this item? */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation")
 	bool bGenerateAffixes = true;
 
-	/** Use item level for affix generation? */
+	/** Use source item level? (vs entry-specific) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation")
 	bool bUseItemLevel = true;
 
-	/** Minimum item level (if bUseItemLevel) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "bUseItemLevel", ClampMin = "1", ClampMax = "100"))
+	/** Entry-specific min item level */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "!bUseItemLevel", ClampMin = "1"))
 	int32 MinItemLevel = 1;
 
-	/** Maximum item level (if bUseItemLevel) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "bUseItemLevel", ClampMin = "1", ClampMax = "100"))
+	/** Entry-specific max item level */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "!bUseItemLevel", ClampMin = "1"))
 	int32 MaxItemLevel = 100;
 
 	// ═══════════════════════════════════════════════
-	// CORRUPTION FLAGS
+	// CORRUPTION
 	// ═══════════════════════════════════════════════
 
-	/** Is this a corrupted item entry? */
+	/** Is this a corrupted variant? */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption")
 	bool bIsCorrupted = false;
 
@@ -476,8 +477,6 @@ struct FLootTable : public FTableRowBase
 		, MaxSelections(0)
 	{}
 };
-
-
 
 // ═══════════════════════════════════════════════════════════════════════
 // LOOT RESULT - Output from loot generation
@@ -682,35 +681,20 @@ struct FLootSpawnSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn")
 	bool bRandomScatter = true;
 
-	/** Apply physics impulse to items */
+	/** Apply physics impulse to spawned items? */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn")
-	bool bApplyImpulse = false;
+	bool bApplyPhysicsImpulse = false;
 
-	/** Impulse direction (normalized) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn", meta = (EditCondition = "bApplyImpulse"))
-	FVector ImpulseDirection = FVector::UpVector;
-
-	/** Impulse strength */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn", meta = (EditCondition = "bApplyImpulse", ClampMin = "0.0"))
-	float ImpulseStrength = 200.0f;
+	/** Physics impulse strength */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spawn", meta = (EditCondition = "bApplyPhysicsImpulse"))
+	float ImpulseStrength = 500.0f;
 
 	FLootSpawnSettings()
 		: SpawnLocation(FVector::ZeroVector)
 		, ScatterRadius(100.0f)
 		, HeightOffset(50.0f)
 		, bRandomScatter(true)
-		, bApplyImpulse(false)
-		, ImpulseDirection(FVector::UpVector)
-		, ImpulseStrength(200.0f)
-	{}
-
-	FLootSpawnSettings(FVector Location, float Radius = 100.0f)
-		: SpawnLocation(Location)
-		, ScatterRadius(Radius)
-		, HeightOffset(50.0f)
-		, bRandomScatter(true)
-		, bApplyImpulse(false)
-		, ImpulseDirection(FVector::UpVector)
-		, ImpulseStrength(200.0f)
+		, bApplyPhysicsImpulse(false)
+		, ImpulseStrength(500.0f)
 	{}
 };
