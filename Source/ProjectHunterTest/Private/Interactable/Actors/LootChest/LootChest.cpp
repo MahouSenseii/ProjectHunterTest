@@ -30,9 +30,15 @@ ALootChest::ALootChest()
 	RootComponent = RootSceneComponent;
 
 	// Create chest mesh
-	ChestMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ChestMesh"));
-	ChestMesh->SetupAttachment(RootComponent);
-	ChestMesh->SetCollisionProfileName(TEXT("BlockAll"));
+	Static_ChestMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ChestMesh"));
+	Static_ChestMesh->SetupAttachment(RootComponent);
+	Static_ChestMesh->SetCollisionProfileName(TEXT("BlockAll"));
+
+
+	// Create chest mesh
+	Skeletal_ChestMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ChestMesh"));
+	Skeletal_ChestMesh->SetupAttachment(RootComponent);
+	Skeletal_ChestMesh->SetCollisionProfileName(TEXT("BlockAll"));
 
 	// Create interaction component
 	InteractableManager = CreateDefaultSubobject<UInteractableManager>(TEXT("InteractableManager"));
@@ -87,9 +93,14 @@ void ALootChest::SetupInteraction()
 	InteractableManager->Config.ActionName = FName("Interact");
 
 	// Setup highlight meshes
-	if (ChestMesh)
+	if (Static_ChestMesh)
 	{
-		InteractableManager->MeshesToHighlight.Add(ChestMesh);
+		InteractableManager->MeshesToHighlight.Add(Static_ChestMesh);
+	}
+
+	if (Skeletal_ChestMesh)
+	{
+		InteractableManager->MeshesToHighlight.Add(Skeletal_ChestMesh);
 	}
 
 	// Bind interaction event
@@ -269,31 +280,35 @@ void ALootChest::SetChestState(EChestState NewState)
 
 void ALootChest::UpdateMeshForState()
 {
-	if (!ChestMesh)
+	if (!Static_ChestMesh && Skeletal_ChestMesh)
 	{
 		return;
 	}
 
+	
 	switch (ChestState)
 	{
 	case EChestState::CS_Closed:
 	case EChestState::CS_Respawning:
-		if (VisualConfig.ClosedMesh)
+		if (VisualConfig.ClosedMesh && VisualConfig.bUseStaticMesh)
 		{
-			ChestMesh->SetStaticMesh(VisualConfig.ClosedMesh);
+			Static_ChestMesh->SetStaticMesh(VisualConfig.ClosedMesh);
+		}
+		else if (VisualConfig.SkeletalMesh && !VisualConfig.bUseStaticMesh)
+		{
+			Skeletal_ChestMesh->SetSkeletalMesh(VisualConfig.SkeletalMesh);
 		}
 		break;
 
 	case EChestState::CS_Open:
 	case EChestState::CS_Looted:
-		if (VisualConfig.OpenMesh)
+		if (VisualConfig.OpenMesh && VisualConfig.bUseStaticMesh)
 		{
-			ChestMesh->SetStaticMesh(VisualConfig.OpenMesh);
+			Static_ChestMesh->SetStaticMesh(VisualConfig.OpenMesh);
 		}
 		break;
 
 	case EChestState::CS_Opening:
-		// Animation in progress - mesh swap happens at completion
 		break;
 	}
 }

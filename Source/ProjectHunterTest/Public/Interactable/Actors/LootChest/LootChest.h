@@ -48,13 +48,21 @@ struct FChestVisualConfig
 {
 	GENERATED_BODY()
 
-	/** Mesh when closed */
+	/** Use static mesh or SkeletalMesh */ 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+	bool bUseStaticMesh = true;
+
+	/** Mesh when closed */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals" , meta = (EditCondition = "bUseStaticMesh"))
 	UStaticMesh* ClosedMesh = nullptr;
 
 	/** Mesh when open */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals", meta = (EditCondition = "bUseStaticMesh"))
 	UStaticMesh* OpenMesh = nullptr;
+
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals", meta = (EditCondition = "!bUseStaticMesh"))
+	USkeletalMesh* SkeletalMesh = nullptr;
 };
 
 /**
@@ -191,7 +199,10 @@ public:
 
 	/** Chest mesh */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UStaticMeshComponent* ChestMesh;
+	UStaticMeshComponent* Static_ChestMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	USkeletalMeshComponent* Skeletal_ChestMesh;
 
 	/** Interaction component */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
