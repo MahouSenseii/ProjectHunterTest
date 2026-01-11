@@ -113,6 +113,22 @@ public:
 	FItemDurability Durability;
 
 	// ═══════════════════════════════════════════════
+	// CORRUPTION STATE (Negative Affixes)
+	// ═══════════════════════════════════════════════
+
+	/** Does this item have ANY corrupted (negative) affixes? */
+	UPROPERTY(BlueprintReadOnly, SaveGame, Category = "Item|Corruption")
+	bool bHasCorruptedAffixes = false;
+
+	/** Total corruption points (sum of all negative affix rank points) */
+	UPROPERTY(BlueprintReadOnly, SaveGame, Category = "Item|Corruption")
+	int32 TotalCorruptionPoints = 0;
+
+	/** Can this item still be modified? (corrupted items cannot be) */
+	UPROPERTY(BlueprintReadWrite, SaveGame, Category = "Item|State")
+	bool bCanBeModified = true;
+
+	// ═══════════════════════════════════════════════
 	// RUNE CRAFTING (Hunter Manga Style)
 	// ═══════════════════════════════════════════════
 	
@@ -172,7 +188,7 @@ public:
 	// ═══════════════════════════════════════════════
 	
 	/**
-	 * Initialize item instance
+	 * Initialize item instance (NO corruption)
 	 * Uses AffixGenerator internally for affix rolling
 	 * 
 	 * @param InBaseItemHandle - Row handle to FItemBase in DataTable
@@ -186,6 +202,25 @@ public:
 		int32 InItemLevel = 1,
 		EItemRarity InRarity = EItemRarity::IR_GradeF,
 		bool bGenerateAffixes = true);
+
+	/**
+	 * Initialize item instance WITH CORRUPTION SUPPORT
+	 * 
+	 * @param InBaseItemHandle - Row handle to FItemBase in DataTable
+	 * @param InItemLevel - Item level (1-100) affects affix tier rolls
+	 * @param InRarity - Item grade (F-SS) determines affix count
+	 * @param bGenerateAffixes - Whether to roll affixes (only for equipment Grade E+)
+	 * @param CorruptionChance - Per-affix chance to be corrupted (0.0 - 1.0)
+	 * @param bForceCorrupted - Force at least one corrupted affix
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void InitializeWithCorruption(
+		FDataTableRowHandle InBaseItemHandle,
+		int32 InItemLevel,
+		EItemRarity InRarity,
+		bool bGenerateAffixes,
+		float CorruptionChance,
+		bool bForceCorrupted);
 
 	// ═══════════════════════════════════════════════
 	// NAME GENERATION
@@ -239,6 +274,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Item|Base")
 	EItemType GetItemType() const;
 
+	/** Get item subtype */
 	UFUNCTION(BlueprintPure, Category = "Item|Base")
 	EItemSubType GetItemSubType() const;
 
@@ -250,59 +286,40 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Item|Base")
 	int32 GetMaxStackSize() const;
 
-	/** Get base weight (single item) */
+	/** Get base weight */
 	UFUNCTION(BlueprintPure, Category = "Item|Base")
 	float GetBaseWeight() const;
 
-	/** Get if weapon is TwoHanded */
+	float GetTotalWeight() const { return TotalWeight; }
+
+	/** Is this a two-handed weapon? */
 	UFUNCTION(BlueprintPure, Category = "Item|Base")
 	bool bIsTwoHanded() const;
-	
-	// ═══════════════════════════════════════════════
-	// WEIGHT CALCULATION 
-	// ═══════════════════════════════════════════════
-	
-	/** Update total weight (base weight × quantity) */
-	UFUNCTION(BlueprintCallable, Category = "Item|Weight")
-	void UpdateTotalWeight();
 
-	/** Get total weight */
-	UFUNCTION(BlueprintPure, Category = "Item|Weight")
-	float GetTotalWeight() const { return TotalWeight; }
+	/** Update total weight based on quantity */
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void UpdateTotalWeight();
 
 	// ═══════════════════════════════════════════════
 	// AFFIX OPERATIONS (Equipment)
 	// ═══════════════════════════════════════════════
 	
 	/**
-	 * Apply all affixes to character via Gameplay Ability System
-	 * @param ASC - Ability System Component to apply effects to
+	 * Apply all affix effects to character via GAS
+	 * @param ASC - Target's Ability System Component
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Item|Affixes")
 	void ApplyAffixesToCharacter(UAbilitySystemComponent* ASC);
 
 	/**
-	 * Remove all affixes from character
-	 * @param ASC - Ability System Component to remove effects from
+	 * Remove all affix effects from character
+	 * @param ASC - Target's Ability System Component
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Item|Affixes")
 	void RemoveAffixesFromCharacter(UAbilitySystemComponent* ASC);
 
-	/**
-	 * Get total stat value for an attribute (sum of all affixes)
-	 * @param Attribute - Gameplay attribute to query
-	 * @param bLocalOnly - Only count local weapon stats
-	 * @param bGlobalOnly - Only count global character stats
-	 * @return Total value from all affixes
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Item|Affixes")
-	float GetTotalStatValue(
-		FGameplayAttribute Attribute,
-		bool bLocalOnly = false,
-		bool bGlobalOnly = false) const;
-
 	// ═══════════════════════════════════════════════
-	// CONSUMABLE OPERATIONS (Potions, Food, etc.)
+	// CONSUMABLE OPERATIONS
 	// ═══════════════════════════════════════════════
 	
 	/**
@@ -397,6 +414,30 @@ public:
 	/** Is this a key item? */
 	UFUNCTION(BlueprintPure, Category = "Item|Type")
 	bool IsKeyItem() const;
+
+	// ═══════════════════════════════════════════════
+	// CORRUPTION CHECKS
+	// ═══════════════════════════════════════════════
+
+	/** Check if item has any corrupted (negative) affixes */
+	UFUNCTION(BlueprintPure, Category = "Item|Corruption")
+	bool IsCorrupted() const { return bHasCorruptedAffixes; }
+
+	/** Get corruption severity (absolute value of negative points) */
+	UFUNCTION(BlueprintPure, Category = "Item|Corruption")
+	int32 GetCorruptionSeverity() const { return FMath::Abs(TotalCorruptionPoints); }
+
+	/** Check if item can still be modified (crafting, enchanting, etc.) */
+	UFUNCTION(BlueprintPure, Category = "Item|State")
+	bool CanBeModified() const { return bCanBeModified && !bHasCorruptedAffixes; }
+
+	/** Calculate corruption state from current affixes (call after affix generation) */
+	UFUNCTION(BlueprintCallable, Category = "Item|Corruption")
+	void CalculateCorruptionState();
+
+	/** Get all corrupted (negative) affixes on this item */
+	UFUNCTION(BlueprintCallable, Category = "Item|Corruption")
+	TArray<FPHAttributeData> GetCorruptedAffixes() const;
 
 	// ═══════════════════════════════════════════════
 	// ITEM STATE CHECKS

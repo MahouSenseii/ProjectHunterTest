@@ -37,10 +37,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLootTableLoadedDelegate, FName, 
  * - Server-authoritative loot generation
  * - Deterministic with seed support
  * 
- * API CLEANUP:
- * - Removed redundant GenerateLootByID() - use GenerateLoot() instead
- * - Primary entry point is GenerateLoot(FLootRequest)
- * - Helper functions for common patterns
+ * FIXES APPLIED:
+ * - Cache key now uses DataTable path (prevents collisions)
+ * - Proper seed fallback generation
+ * - Null safety checks
  */
 UCLASS()
 class PROJECTHUNTERTEST_API ULootSubsystem : public UWorldSubsystem
@@ -65,27 +65,22 @@ public:
 	TSoftObjectPtr<UDataTable> LootSourceRegistryPath;
 
 	/** Global drop chance multiplier (for events, difficulty, etc.) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot|Config", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot|Config")
 	float GlobalDropChanceMultiplier = 1.0f;
 
-	/** Global quantity multiplier */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot|Config", meta = (ClampMin = "0.0"))
-	float GlobalQuantityMultiplier = 1.0f;
-
-	/** Global corruption chance modifier */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot|Config", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float GlobalCorruptionChanceModifier = 0.0f;
-
 	// ═══════════════════════════════════════════════
-	// EVENTS
+	// DELEGATES
 	// ═══════════════════════════════════════════════
 
+	/** Called when loot is generated */
 	UPROPERTY(BlueprintAssignable, Category = "Loot|Events")
 	FOnLootGeneratedDelegate OnLootGenerated;
 
+	/** Called when loot is spawned in world */
 	UPROPERTY(BlueprintAssignable, Category = "Loot|Events")
 	FOnLootSpawnedDelegate OnLootSpawned;
 
+	/** Called when a loot table is loaded */
 	UPROPERTY(BlueprintAssignable, Category = "Loot|Events")
 	FOnLootTableLoadedDelegate OnLootTableLoaded;
 
@@ -94,70 +89,49 @@ public:
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * PRIMARY ENTRY POINT: Generate loot from a registered source
-	 * @param Request - Loot generation request with all parameters
-	 * @return Generated loot batch
+	 * Generate loot from a registered source
+	 * @param Request - Loot generation request
+	 * @return Batch of generated loot results
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Loot|Generation")
 	FLootResultBatch GenerateLoot(const FLootRequest& Request);
 
 	/**
-	 * Generate and spawn loot in one call
+	 * Generate and spawn loot at location
 	 * @param Request - Loot generation request
-	 * @param SpawnSettings - How to spawn the loot
+	 * @param Location - World location to spawn
+	 * @param SpreadRadius - Spread radius for multiple items
 	 * @return Generated loot batch
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Loot|Generation")
-	FLootResultBatch GenerateAndSpawnLoot(
-		const FLootRequest& Request,
-		const FLootSpawnSettings& SpawnSettings);
+	FLootResultBatch GenerateAndSpawnLoot(const FLootRequest& Request, FLootSpawnSettings SpawnSettings);
 
 	// ═══════════════════════════════════════════════
 	// PRIMARY API - SPAWNING
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Spawn generated loot results in world
-	 * @param Results - Already generated results
-	 * @param SpawnSettings - Spawn configuration
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Loot|Spawn")
-	void SpawnLootResults(
-		const FLootResultBatch& Results,
-		const FLootSpawnSettings& SpawnSettings);
-
-	/**
-	 * Spawn single item at location
-	 * @param Item - Item to spawn
+	 * Spawn already-generated loot at location
+	 * @param Batch - Pre-generated loot batch
 	 * @param Location - World location
-	 * @return Ground item ID (-1 on failure)
+	 * @param SpreadRadius - Spread radius
+	 * @return True if spawn successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Loot|Spawn")
-	int32 SpawnItemAtLocation(UItemInstance* Item, FVector Location);
-
-	/**
-	 * Calculate scatter positions for items
-	 * @param Settings - Spawn settings
-	 * @param NumItems - Number of positions needed
-	 * @return Array of world positions
-	 */
-	UFUNCTION(BlueprintPure, Category = "Loot|Spawn")
-	TArray<FVector> CalculateScatterPositions(
-		const FLootSpawnSettings& Settings,
-		int32 NumItems) const;
+	UFUNCTION(BlueprintCallable, Category = "Loot|Spawning")
+	bool SpawnLootAtLocation(const FLootResultBatch& Batch, FVector Location, float SpreadRadius = 50.0f);
 
 	// ═══════════════════════════════════════════════
 	// REGISTRY QUERIES
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Check if source ID exists in registry
+	 * Check if a source ID is registered
 	 */
 	UFUNCTION(BlueprintPure, Category = "Loot|Registry")
 	bool IsSourceRegistered(FName SourceID) const;
 
 	/**
-	 * Get source entry from registry
+	 * Get source entry by ID
 	 */
 	UFUNCTION(BlueprintPure, Category = "Loot|Registry")
 	bool GetSourceEntry(FName SourceID, FLootSourceEntry& OutEntry) const;
@@ -232,7 +206,10 @@ protected:
 	UPROPERTY()
 	UDataTable* CachedRegistry;
 
-	/** Cached loot tables (SourceID → DataTable) */
+	/** 
+	 * Cached loot tables 
+	 * FIX: Key is now DataTable path, not row name (prevents collisions)
+	 */
 	UPROPERTY()
 	TMap<FName, UDataTable*> LootTableCache;
 
@@ -255,9 +232,6 @@ protected:
 /**
  * Helper function for quick loot generation
  * Use when you don't need full FLootRequest control
- * 
- * Example:
- *   FLootResultBatch Loot = QuickGenerateLoot(GetWorld(), "Goblin_Basic", PlayerStats->GetLuck());
  */
 FORCEINLINE FLootResultBatch QuickGenerateLoot(
 	UWorld* World,

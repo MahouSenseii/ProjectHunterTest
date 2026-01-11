@@ -17,6 +17,9 @@ UInteractionManager::UInteractionManager()
 {
 	PrimaryComponentTick.bCanEverTick = false; 
 	SetIsReplicatedByDefault(false);
+	
+	CurrentGroundItemID = -1;
+	bSystemInitialized = false;
 }
 
 void UInteractionManager::BeginPlay()
@@ -38,7 +41,7 @@ void UInteractionManager::BeginPlay()
 	// CHECK LOCAL CONTROL (Direct check, not delegated)
 	// ═══════════════════════════════════════════════
 	
-	// FIXED: Check locally controlled directly here instead of delegating
+	// Check locally controlled directly here instead of delegating
 	// to uninitialized TraceManager. We can't call IsLocallyControlled()
 	// because TraceManager.OwnerActor is still nullptr at this point.
 	if (!OwnerPawn->IsLocallyControlled())
@@ -196,7 +199,7 @@ void UInteractionManager::PickupAllNearbyItems()
 
 void UInteractionManager::CheckForInteractables()
 {
-	// FIXED: Now TraceManager is properly initialized, so we can safely
+	// Now TraceManager is properly initialized, so we can safely
 	// delegate to TraceManager.IsLocallyControlled()
 	if (!bInteractionEnabled || !IsLocallyControlled())
 	{
@@ -239,7 +242,7 @@ void UInteractionManager::CheckForInteractables()
 	}
 
 	// ═══════════════════════════════════════════════
-	// DEBUG VISUALIZATION (NOW COMPLETE!)
+	// DEBUG VISUALIZATION
 	// ═══════════════════════════════════════════════
 	if (bDebugEnabled)
 	{
@@ -251,11 +254,11 @@ void UInteractionManager::CheckForInteractables()
 		{
 			Distance = FVector::Distance(CameraLocation, InteractableComp->GetOwner()->GetActorLocation());
 			
-			// ✅ NOW ACTUALLY CALLED: Draw detailed interactable info
+			// Draw detailed interactable info
 			DebugManager.DrawInteractableInfo(InteractableComp, Distance);
 		}
 		
-		// ✅ NOW ACTUALLY CALLED: Draw ground item visualization
+		// Draw ground item visualization
 		if (CurrentGroundItemID != -1)
 		{
 			// Get ground item location from subsystem
@@ -293,6 +296,15 @@ UInteractableManager* UInteractionManager::GetCurrentInteractable() const
 
 void UInteractionManager::InitializeInteractionSystem()
 {
+	// ═══════════════════════════════════════════════
+	// FIX: Guard against double initialization
+	// ═══════════════════════════════════════════════
+	if (bSystemInitialized)
+	{
+		UE_LOG(LogInteractionManager, Verbose, TEXT("InteractionManager: Already initialized, skipping"));
+		return;
+	}
+
 	UE_LOG(LogInteractionManager, Log, TEXT("═══════════════════════════════════════════"));
 	UE_LOG(LogInteractionManager, Log, TEXT("  INTERACTION MANAGER - Initializing"));
 	UE_LOG(LogInteractionManager, Log, TEXT("═══════════════════════════════════════════"));
@@ -317,6 +329,8 @@ void UInteractionManager::InitializeInteractionSystem()
 		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: ✓ Initialized on %s (Frequency: %.2fs)"), 
 			*GetOwner()->GetName(), TraceManager.CheckFrequency);
 	}
+	
+	bSystemInitialized = true;
 	
 	UE_LOG(LogInteractionManager, Log, TEXT("═══════════════════════════════════════════"));
 }
@@ -360,7 +374,7 @@ void UInteractionManager::InitializeSubManagers()
 	PickupManager.Initialize(Owner, World);
 	DebugManager.Initialize(Owner, World);
 
-	// ✅ Connect debug manager to trace manager for trace visualization
+	// Connect debug manager to trace manager for trace visualization
 	TraceManager.SetDebugManager(&DebugManager);
 
 	UE_LOG(LogTemp, Log, TEXT("InteractionManager: All sub-managers initialized"));
@@ -458,7 +472,7 @@ void UInteractionManager::UpdateFocusState(TScriptInterface<IInteractable> NewIn
 	// Update current interactable
 	CurrentInteractable = NewInteractable;
 
-	// Start focus on new interactable
+	// Start focus on new interactable (CORRECT: OnBeginFocus, not OnStartFocus)
 	if (CurrentInteractable.GetInterface())
 	{
 		IInteractable::Execute_OnBeginFocus(CurrentInteractable.GetObject(), GetOwner());

@@ -76,14 +76,25 @@ struct FLootDropSettings
 	int32 LevelVariance = 2;
 
 	// ═══════════════════════════════════════════════
-	// CORRUPTION
+	// CORRUPTION (Negative Affix System)
 	// ═══════════════════════════════════════════════
 
-	/** Chance for corruption (0.0 - 1.0) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float CorruptionChance = 0.0f;
+	/** 
+	 * Global multiplier for corruption chance 
+	 * Applied to each entry's CorruptionChancePerAffix
+	 * 0.0 = no corruption, 2.0 = double corruption chance
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption", meta = (ClampMin = "0.0"))
+	float CorruptionChanceMultiplier = 1.0f;
 
-	/** Only drop corrupted items? */
+	/** 
+	 * Force all dropped items to have at least one corrupted (negative) affix 
+	 * Useful for cursed chests, corrupted zones, etc.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption")
+	bool bForceCorruptedDrops = false;
+
+	/** Only drop corrupted items? (filters non-corruptible entries) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption")
 	bool bOnlyCorruptedDrops = false;
 
@@ -113,7 +124,8 @@ struct FLootDropSettings
 		, MinimumItemRarity(EItemRarity::IR_None)
 		, SourceLevel(1)
 		, LevelVariance(2)
-		, CorruptionChance(0.0f)
+		, CorruptionChanceMultiplier(1.0f)
+		, bForceCorruptedDrops(false)
 		, bOnlyCorruptedDrops(false)
 		, bExcludeCorruptedEntries(false)
 		, PlayerLuckBonus(0.0f)
@@ -311,33 +323,53 @@ struct FLootEntry
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation")
 	bool bGenerateAffixes = true;
 
-	/** Use source item level? (vs entry-specific) */
+	/** 
+	 * Use source's level with variance for item level generation?
+	 * TRUE = Use SourceLevel +/- LevelVariance from FLootDropSettings
+	 * FALSE = Use MinItemLevel to MaxItemLevel from this entry
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation")
 	bool bUseItemLevel = true;
 
-	/** Entry-specific min item level */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "!bUseItemLevel", ClampMin = "1"))
+	/** Entry-specific min item level (only used if bUseItemLevel = false) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "!bUseItemLevel", ClampMin = "1", ClampMax = "100"))
 	int32 MinItemLevel = 1;
 
-	/** Entry-specific max item level */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "!bUseItemLevel", ClampMin = "1"))
+	/** Entry-specific max item level (only used if bUseItemLevel = false) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Generation", meta = (EditCondition = "!bUseItemLevel", ClampMin = "1", ClampMax = "100"))
 	int32 MaxItemLevel = 100;
 
 	// ═══════════════════════════════════════════════
-	// CORRUPTION
+	// CORRUPTION (Negative Affix System)
 	// ═══════════════════════════════════════════════
 
-	/** Is this a corrupted variant? */
+	/** Is this entry pre-defined as corrupted? */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption")
 	bool bIsCorrupted = false;
 
-	/** Corruption type (if corrupted) */
+	/** Corruption type (for pre-corrupted entries) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption", meta = (EditCondition = "bIsCorrupted"))
 	ECorruptionType CorruptionType = ECorruptionType::CT_None;
 
-	/** Can this entry produce corrupted variants? */
+	/** Can this entry roll corrupted (negative) affixes during generation? */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption")
 	bool bCanBeCorrupted = true;
+
+	/** 
+	 * Per-affix chance to be corrupted (negative affix) 
+	 * Only applies if bCanBeCorrupted = true
+	 * 0.0 = no corruption, 1.0 = all affixes corrupted
+	 * This is multiplied by Settings.CorruptionChanceMultiplier
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption", meta = (EditCondition = "bCanBeCorrupted", ClampMin = "0.0", ClampMax = "1.0"))
+	float CorruptionChancePerAffix = 0.0f;
+
+	/** 
+	 * Force at least one corrupted (negative) affix on items from this entry 
+	 * Guarantees item will have IsCorrupted() = true
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Corruption", meta = (EditCondition = "bCanBeCorrupted"))
+	bool bForceOneCorruptedAffix = false;
 
 	// ═══════════════════════════════════════════════
 	// VALIDATION
@@ -369,6 +401,8 @@ struct FLootEntry
 		, bIsCorrupted(false)
 		, CorruptionType(ECorruptionType::CT_None)
 		, bCanBeCorrupted(true)
+		, CorruptionChancePerAffix(0.0f)
+		, bForceOneCorruptedAffix(false)
 	{}
 };
 
@@ -386,49 +420,53 @@ struct FLootTable : public FTableRowBase
 {
 	GENERATED_BODY()
 
-	/** Display name for this loot table */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Info")
-	FText DisplayName;
+	// ═══════════════════════════════════════════════
+	// ENTRIES
+	// ═══════════════════════════════════════════════
 
-	/** All possible loot entries in this table */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot")
+	/** All possible drops in this table */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Entries")
 	TArray<FLootEntry> Entries;
 
-	/** Selection method for this table */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	// ═══════════════════════════════════════════════
+	// SELECTION SETTINGS
+	// ═══════════════════════════════════════════════
+
+	/** How to select items from the pool */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Selection")
 	ELootSelectionMethod SelectionMethod = ELootSelectionMethod::LSM_Weighted;
 
-	/** Allow duplicate items from same entry? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	/** Allow same entry to drop multiple times? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Selection")
 	bool bAllowDuplicates = true;
 
-	/** Minimum entries to select (0 = use SelectionMethod logic) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings", meta = (ClampMin = "0"))
+	/** Min selections (0 = use settings) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Selection", meta = (ClampMin = "0"))
 	int32 MinSelections = 0;
 
-	/** Maximum entries to select (0 = unlimited) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings", meta = (ClampMin = "0"))
+	/** Max selections (0 = use settings) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Selection", meta = (ClampMin = "0"))
 	int32 MaxSelections = 0;
 
 	// ═══════════════════════════════════════════════
-	// UTILITY FUNCTIONS
+	// HELPER FUNCTIONS
 	// ═══════════════════════════════════════════════
 
-	/** Get total weight of all entries */
-	float GetTotalWeight() const
+	/** Get valid entries only */
+	TArray<FLootEntry> GetValidEntries() const
 	{
-		float Total = 0.0f;
+		TArray<FLootEntry> Result;
 		for (const FLootEntry& Entry : Entries)
 		{
 			if (Entry.IsValid())
 			{
-				Total += Entry.GetEffectiveWeight();
+				Result.Add(Entry);
 			}
 		}
-		return Total;
+		return Result;
 	}
 
-	/** Get only corrupted entries */
+	/** Get corrupted entries */
 	TArray<FLootEntry> GetCorruptedEntries() const
 	{
 		TArray<FLootEntry> Result;
@@ -469,6 +507,32 @@ struct FLootTable : public FTableRowBase
 		}
 		return Result;
 	}
+
+	/** Get entries that can generate corrupted affixes */
+	TArray<FLootEntry> GetCorruptibleEntries() const
+	{
+		TArray<FLootEntry> Result;
+		for (const FLootEntry& Entry : Entries)
+		{
+			if (Entry.bCanBeCorrupted && Entry.IsValid())
+			{
+				Result.Add(Entry);
+			}
+		}
+		return Result;
+	}
+
+	float GetTotalWeight() const
+	{
+		float TotalWeight = 0.0f;
+		for (const FLootEntry& Entry : Entries)
+		{
+			TotalWeight += Entry.GetEffectiveWeight();
+		}
+		return TotalWeight;
+	}
+
+	
 
 	FLootTable()
 		: SelectionMethod(ELootSelectionMethod::LSM_Weighted)
@@ -559,7 +623,7 @@ struct FLootResultBatch
 
 	/** Seed used for generation (for replication) */
 	UPROPERTY(BlueprintReadOnly, Category = "Stats")
-	int32 GenerationSeed = 0;
+	int32 Seed = 0;
 
 	void AddResult(const FLootResult& Result)
 	{
@@ -578,12 +642,39 @@ struct FLootResultBatch
 		ExperienceReward = 0;
 	}
 
+	/** Get count of corrupted items in batch */
+	int32 GetCorruptedItemCount() const
+	{
+		int32 Count = 0;
+		for (const FLootResult& Result : Results)
+		{
+			if (Result.bWasCorrupted)
+			{
+				Count++;
+			}
+		}
+		return Count;
+	}
+
+	/** Check if any items were corrupted */
+	bool HasCorruptedItems() const
+	{
+		for (const FLootResult& Result : Results)
+		{
+			if (Result.bWasCorrupted)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	FLootResultBatch()
 		: TotalItemCount(0)
 		, CurrencyDropped(0)
 		, ExperienceReward(0)
 		, SourceType(ELootSourceType::LST_None)
-		, GenerationSeed(0)
+		, Seed(0)
 	{}
 };
 

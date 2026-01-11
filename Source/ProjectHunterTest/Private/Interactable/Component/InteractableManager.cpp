@@ -1,487 +1,441 @@
-// Interactable/Component/InteractableManager.cpp
+// Character/Component/Interaction/InteractionManager.cpp
 
+#include "Character/Component/Interaction/InteractionManager.h"
+#include "Interactable/Interface/Interactable.h"
 #include "Interactable/Component/InteractableManager.h"
-#include "Interactable/Widget/InteractableWidget.h"
-#include "Components/PrimitiveComponent.h"
-#include "Components/WidgetComponent.h"
-#include "GameFramework/Actor.h"
-#include "Kismet/GameplayStatics.h"
+#include "Tower/Subsystem/GroundItemSubsystem.h"
+#include "GameFramework/Pawn.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 
-UInteractableManager::UInteractableManager()
+DEFINE_LOG_CATEGORY(LogInteractionManager);
+
+UInteractionManager::UInteractionManager()
 {
-	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
+	
+	CurrentGroundItemID = -1;
+	bSystemInitialized = false;
 }
 
-void UInteractableManager::BeginPlay()
+void UInteractionManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Auto-find meshes if none specified
-	if (MeshesToHighlight.Num() == 0)
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn)
 	{
-		AutoFindMeshes();
-	}
-
-	// Create widget component
-	if (bShowWidget && InteractionWidgetClass)
-	{
-		CreateWidgetComponent();
-	}
-}
-
-void UInteractableManager::CreateWidgetComponent()
-{
-	AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		UE_LOG(LogTemp, Error, TEXT("InteractableManager: No owner actor!"));
+		UE_LOG(LogInteractionManager, Warning, TEXT("InteractionManager: Owner is not a Pawn!"));
 		return;
 	}
 
-	// Create widget component
-	WidgetComponent = NewObject<UWidgetComponent>(Owner, UWidgetComponent::StaticClass(), TEXT("InteractionWidget"));
-	if (!WidgetComponent)
+	if (OwnerPawn->IsLocallyControlled())
 	{
-		UE_LOG(LogTemp, Error, TEXT("InteractableManager: Failed to create WidgetComponent!"));
-		return;
-	}
-
-	// Register component FIRST
-	WidgetComponent->RegisterComponent();
-	
-	// ═══════════════════════════════════════════════════════════
-	// CRITICAL QUALITY SETTINGS (Set BEFORE widget class!)
-	// ═══════════════════════════════════════════════════════════
-	
-	// Set world space
-	WidgetComponent->SetWidgetSpace(EWidgetSpace::World);
-	
-	// Geometry settings BEFORE widget creation
-	WidgetComponent->SetGeometryMode(EWidgetGeometryMode::Plane);
-	WidgetComponent->SetBlendMode(EWidgetBlendMode::Transparent);
-	WidgetComponent->SetTwoSided(false);
-	
-	// Enable ticking
-	WidgetComponent->SetTickMode(ETickMode::Enabled);
-	WidgetComponent->SetWindowFocusable(false);
-	
-	// Set pivot BEFORE setting draw size
-	WidgetComponent->SetPivot(FVector2D(0.5f, 1.0f)); // Bottom-center
-	
-	// ═══════════════════════════════════════════════════════════
-	// RESOLUTION SETTINGS
-	// ═══════════════════════════════════════════════════════════
-	
-	if (bUseDesiredSize)
-	{
-		// METHOD 1: Use desired size (BEST for quality)
-		WidgetComponent->SetDrawSize(WidgetDrawSize); // Physical world size
-		WidgetComponent->SetDrawAtDesiredSize(true);  // Render at widget's native resolution
+		InitializeInteractionSystem();
 	}
 	else
 	{
-		// METHOD 2: Manual high-resolution render target
-		FVector2D HighResSize = WidgetDrawSize * ResolutionScale;
-		WidgetComponent->SetDrawSize(HighResSize);
-		WidgetComponent->SetDrawAtDesiredSize(false);
+		GetWorld()->GetTimerManager().SetTimer(
+			PossessionCheckTimer,
+			this,
+			&UInteractionManager::CheckPossessionAndInitialize,
+			0.1f,
+			true,
+			0.5f
+		);
+		
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Waiting for possession..."));
 	}
-	
-	// ═══════════════════════════════════════════════════════════
-	// SET WIDGET CLASS AND INITIALIZE
-	// ═══════════════════════════════════════════════════════════
-	
-	// NOW set the widget class (after all quality settings)
-	WidgetComponent->SetWidgetClass(InteractionWidgetClass);
-	
-	// Set position
-	WidgetComponent->SetRelativeLocation(WidgetOffset);
-	
-	// Attach to root
-	WidgetComponent->AttachToComponent(
-		Owner->GetRootComponent(),
-		FAttachmentTransformRules::KeepRelativeTransform
-	);
-	
-	// CRITICAL: Initialize widget to apply all settings
-	WidgetComponent->InitWidget();
-	
-	// Force redraw to ensure quality settings are applied
-	WidgetComponent->RequestRedraw();
-	
-	// ═══════════════════════════════════════════════════════════
-	// FINAL SETTINGS
-	// ═══════════════════════════════════════════════════════════
-	
-	// Background
-	WidgetComponent->SetBackgroundColor(FLinearColor::Transparent);
-	
-	// Hidden by default
-	WidgetComponent->SetVisibility(false);
-
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Created high-quality widget for %s (Type: %s)"), 
-		*Owner->GetName(),
-		*UEnum::GetValueAsString(Config.InteractionType));
 }
 
-void UInteractableManager::AutoFindMeshes()
+void UInteractionManager::Initialize()
 {
+	InitializeInteractionSystem();
+}
+
+void UInteractionManager::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	
+	if (!bSystemInitialized || !bInteractionEnabled)
+	{
+		return;
+	}
+	
+	FVector CameraLocation;
+	FVector CameraDirection;
+	TraceManager.GetTraceOrigin(CameraLocation, CameraDirection);
+
+	if (bDebugEnabled)
+	{
+		UInteractableManager* InteractableComp = GetCurrentInteractable();
+		float Distance = 0.0f;
+		
+		if (InteractableComp)
+		{
+			Distance = FVector::Distance(CameraLocation, InteractableComp->GetOwner()->GetActorLocation());
+			DebugManager.DrawInteractableInfo(InteractableComp, Distance);
+		}
+		
+		if (CurrentGroundItemID != -1)
+		{
+			if (UGroundItemSubsystem* Subsystem = GetWorld()->GetSubsystem<UGroundItemSubsystem>())
+			{
+				const TMap<int32, FVector>& Locations = Subsystem->GetInstanceLocations();
+				if (const FVector* LocationPtr = Locations.Find(CurrentGroundItemID))
+				{
+					DebugManager.DrawGroundItem(*LocationPtr, CurrentGroundItemID);
+				}
+			}
+		}
+
+		DebugManager.DisplayInteractionState(InteractableComp, Distance, CurrentGroundItemID);
+	}
+}
+
+void UInteractionManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// ═══════════════════════════════════════════════
+	// FIX: Safe timer cleanup
+	// ═══════════════════════════════════════════════
+	if (UWorld* World = GetWorld())
+	{
+		FTimerManager& TimerManager = World->GetTimerManager();
+		TimerManager.ClearTimer(InteractionCheckTimer);
+		TimerManager.ClearTimer(HoldProgressTimer);
+		TimerManager.ClearTimer(PossessionCheckTimer);
+	}
+
+	if (CurrentInteractable.GetInterface())
+	{
+		IInteractable::Execute_OnEndFocus(CurrentInteractable.GetObject(), GetOwner());
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════
+
+void UInteractionManager::InitializeInteractionSystem()
+{
+	// ═══════════════════════════════════════════════
+	// FIX: Guard against double initialization
+	// ═══════════════════════════════════════════════
+	if (bSystemInitialized)
+	{
+		UE_LOG(LogInteractionManager, Verbose, TEXT("InteractionManager: Already initialized, skipping"));
+		return;
+	}
+	
+	if (!GetOwner())
+	{
+		UE_LOG(LogInteractionManager, Error, TEXT("InteractionManager: Cannot initialize - no owner!"));
+		return;
+	}
+	
+	UE_LOG(LogInteractionManager, Log, TEXT("═══════════════════════════════════════════"));
+	UE_LOG(LogInteractionManager, Log, TEXT("  INTERACTION MANAGER - Initializing"));
+	UE_LOG(LogInteractionManager, Log, TEXT("═══════════════════════════════════════════"));
+
+	InitializeSubManagers();
+	ApplyQuickSettings();
+
+	if (bInteractionEnabled)
+	{
+		GetWorld()->GetTimerManager().SetTimer(
+			InteractionCheckTimer,
+			this,
+			&UInteractionManager::CheckForInteractables,
+			TraceManager.CheckFrequency,
+			true
+		);
+	}
+	
+	bSystemInitialized = true;
+	SetComponentTickEnabled(true);
+
+	UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: ✓ Initialized on %s (Frequency: %.2fs)"), 
+		*GetOwner()->GetName(), TraceManager.CheckFrequency);
+	UE_LOG(LogInteractionManager, Log, TEXT("═══════════════════════════════════════════"));
+}
+
+void UInteractionManager::CheckPossessionAndInitialize()
+{
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn)
+	{
+		GetWorld()->GetTimerManager().ClearTimer(PossessionCheckTimer);
+		return;
+	}
+
+	if (OwnerPawn->IsLocallyControlled())
+	{
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Possession confirmed!"));
+		GetWorld()->GetTimerManager().ClearTimer(PossessionCheckTimer);
+		InitializeInteractionSystem();
+	}
+}
+
+void UInteractionManager::InitializeSubManagers()
+{
+	AActor* Owner = GetOwner();
+	UWorld* World = GetWorld();
+
+	if (!Owner || !World)
+	{
+		UE_LOG(LogInteractionManager, Error, TEXT("InteractionManager: Invalid owner or world"));
+		return;
+	}
+
+	TraceManager.Initialize(Owner, World);
+	ValidatorManager.Initialize(Owner, World);
+	PickupManager.Initialize(Owner, World);
+	DebugManager.Initialize(Owner, World);
+
+	TraceManager.SetDebugManager(&DebugManager);
+
+	UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: All sub-managers initialized"));
+}
+
+void UInteractionManager::ApplyQuickSettings()
+{
+	if (bDebugEnabled)
+	{
+		DebugManager.DebugMode = EInteractionDebugMode::Full;
+	}
+	else
+	{
+		DebugManager.DebugMode = EInteractionDebugMode::None;
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PRIMARY INTERFACE
+// ═══════════════════════════════════════════════════════════════════════
+
+void UInteractionManager::OnInteractPressed()
+{
+	if (!bInteractionEnabled || !bSystemInitialized)
+	{
+		return;
+	}
+
+	if (CurrentInteractable.GetInterface())
+	{
+		UInteractableManager* InteractableComp = Cast<UInteractableManager>(CurrentInteractable.GetObject());
+		if (InteractableComp)
+		{
+			AActor* TargetActor = InteractableComp->GetOwner();
+			InteractWithActor(TargetActor);
+			return;
+		}
+	}
+
+	if (CurrentGroundItemID != -1)
+	{
+		PickupManager.StartHoldInteraction(CurrentGroundItemID);
+		
+		GetWorld()->GetTimerManager().SetTimer(
+			HoldProgressTimer,
+			this,
+			&UInteractionManager::UpdateHoldProgress,
+			0.016f,
+			true
+		);
+	}
+}
+
+void UInteractionManager::OnInteractReleased()
+{
+	if (!bInteractionEnabled || !bSystemInitialized)
+	{
+		return;
+	}
+
+	if (PickupManager.IsHoldingForGroundItem())
+	{
+		float HoldProgress = PickupManager.GetHoldProgress();
+		
+		GetWorld()->GetTimerManager().ClearTimer(HoldProgressTimer);
+		
+		if (HoldProgress < 0.3f)
+		{
+			int32 ItemID = PickupManager.GetCurrentHoldItemID();
+			PickupManager.CancelHoldInteraction();
+			PickupGroundItemToInventory(ItemID);
+		}
+		else if (HoldProgress >= 1.0f)
+		{
+			int32 ItemID = PickupManager.GetCurrentHoldItemID();
+			PickupManager.CancelHoldInteraction();
+			PickupGroundItemAndEquip(ItemID);
+		}
+		else
+		{
+			PickupManager.CancelHoldInteraction();
+		}
+	}
+}
+
+void UInteractionManager::PickupAllNearbyItems()
+{
+	if (!bInteractionEnabled || !bSystemInitialized)
+	{
+		return;
+	}
+	
+	int32 PickedUp = PickupManager.PickupAllNearby(GetOwner()->GetActorLocation());
+	
+	if (bDebugEnabled && PickedUp > 0)
+	{
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Picked up %d nearby items"), PickedUp);
+	}
+}
+
+void UInteractionManager::CheckForInteractables()
+{
+	if (!bInteractionEnabled || !bSystemInitialized)
+	{
+		return;
+	}
+	
+	TScriptInterface<IInteractable> NewInteractable = TraceManager.TraceForActorInteractable();
+	
+	int32 NewGroundItemID = -1;
+	if (!NewInteractable.GetInterface())
+	{
+		TraceManager.FindNearestGroundItem(NewGroundItemID);
+	}
+	
+	UpdateFocusState(NewInteractable);
+	CurrentGroundItemID = NewGroundItemID;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// GETTERS
+// ═══════════════════════════════════════════════════════════════════════
+
+UInteractableManager* UInteractionManager::GetCurrentInteractable() const
+{
+	if (CurrentInteractable.GetInterface())
+	{
+		return Cast<UInteractableManager>(CurrentInteractable.GetObject());
+	}
+	return nullptr;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INTERNAL LOGIC
+// ═══════════════════════════════════════════════════════════════════════
+
+void UInteractionManager::InteractWithActor(AActor* TargetActor)
+{
+	if (!TargetActor)
+	{
+		return;
+	}
+
 	AActor* Owner = GetOwner();
 	if (!Owner)
 	{
 		return;
 	}
 
-	// Get all primitive components
-	TArray<UPrimitiveComponent*> Primitives;
-	Owner->GetComponents<UPrimitiveComponent>(Primitives);
+	FVector ClientLocation = Owner->GetActorLocation();
 
-	for (UPrimitiveComponent* Primitive : Primitives)
+	if (ValidatorManager.HasAuthority())
 	{
-		// Skip collision components
-		if (Primitive->GetName().Contains(TEXT("Collision")) || 
-		    Primitive->GetName().Contains(TEXT("Trigger")))
+		if (!ValidatorManager.ValidateActorInteraction(TargetActor, ClientLocation, TraceManager.InteractionDistance))
 		{
-			continue;
-		}
-
-		MeshesToHighlight.Add(Primitive);
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Auto-found %d meshes on %s"), 
-		MeshesToHighlight.Num(), *Owner->GetName());
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// INTERACTABLE INTERFACE - BASIC
-// ═══════════════════════════════════════════════════════════════════════
-
-void UInteractableManager::OnInteract_Implementation(AActor* Interactor)
-{
-	// For Tap or simple interactions
-	switch (Config.InteractionType)
-	{
-	case EInteractionType::IT_Tap:
-		OnTapInteracted.Broadcast(Interactor);
-		UE_LOG(LogTemp, Log, TEXT("InteractableManager: Tap interact on %s"), *GetOwner()->GetName());
-		break;
-		
-	case EInteractionType::IT_Toggle:
-		OnTapInteracted.Broadcast(Interactor);
-		UE_LOG(LogTemp, Log, TEXT("InteractableManager: Toggle interact on %s"), *GetOwner()->GetName());
-		break;
-		
-	default:
-		// Hold/Mash interactions handled by their own functions
-		UE_LOG(LogTemp, Warning, TEXT("InteractableManager: OnInteract called on non-tap interaction type"));
-		break;
-	}
-}
-
-bool UInteractableManager::CanInteract_Implementation(AActor* Interactor) const
-{
-	return Config.bCanInteract;
-}
-
-void UInteractableManager::OnBeginFocus_Implementation(AActor* Interactor)
-{
-	// Apply highlight
-	if (bEnableHighlight)
-	{
-		ApplyHighlight(true);
-	}
-
-	// Show widget
-	if (WidgetComponent)
-	{
-		WidgetComponent->SetVisibility(true);
-
-		// Update widget with interaction-type-specific text
-		if (UInteractableWidget* Widget = Cast<UInteractableWidget>(WidgetComponent->GetWidget()))
-		{
-			UpdateWidgetText();
+			UE_LOG(LogInteractionManager, Warning, TEXT("InteractionManager: Actor interaction failed validation"));
 			
-			// CRITICAL: Force widget update to ensure crisp rendering
-			WidgetComponent->RequestRedraw();
+			if (bDebugEnabled)
+			{
+				DebugManager.LogInteraction(GetCurrentInteractable(), false, "Validation failed");
+			}
+			return;
 		}
 	}
 
-	// Broadcast event
-	OnFocusBegin.Broadcast(Interactor);
-
-	UE_LOG(LogTemp, Verbose, TEXT("InteractableManager: Begin focus on %s (Type: %s)"), 
-		*GetOwner()->GetName(), *UEnum::GetValueAsString(Config.InteractionType));
-}
-
-void UInteractableManager::OnEndFocus_Implementation(AActor* Interactor)
-{
-	// Remove highlight
-	if (bEnableHighlight)
+	UInteractableManager* InteractableComp = TargetActor->FindComponentByClass<UInteractableManager>();
+	if (InteractableComp)
 	{
-		ApplyHighlight(false);
+		IInteractable::Execute_OnInteract(InteractableComp, Owner);
+		
+		if (bDebugEnabled)
+		{
+			DebugManager.LogInteraction(InteractableComp, true);
+		}
 	}
-
-	// Hide widget
-	if (WidgetComponent)
+	else if (TargetActor->GetClass()->ImplementsInterface(UInteractable::StaticClass()))
 	{
-		WidgetComponent->SetVisibility(false);
-	}
-
-	// Broadcast event
-	OnFocusEnd.Broadcast(Interactor);
-
-	UE_LOG(LogTemp, Verbose, TEXT("InteractableManager: End focus on %s"), *GetOwner()->GetName());
-}
-
-EInteractionType UInteractableManager::GetInteractionType_Implementation() const
-{
-	return Config.InteractionType;
-}
-
-FName UInteractableManager::GetInteractionActionName_Implementation() const
-{
-	return Config.ActionName;
-}
-
-FText UInteractableManager::GetInteractionText_Implementation() const
-{
-	// Return appropriate text based on interaction type
-	switch (Config.InteractionType)
-	{
-	case EInteractionType::IT_Hold:
-		return Config.HoldText;
-		
-	case EInteractionType::IT_Mash:
-		return Config.MashText;
-		
-	case EInteractionType::IT_TapOrHold:
-		// For TapOrHold, show both options
-		return FText::Format(FText::FromString("{0} | {1}"), Config.TapText, Config.HoldActionText);
-		
-	default:
-		return Config.InteractionText;
+		IInteractable::Execute_OnInteract(TargetActor, Owner);
 	}
 }
 
-FVector UInteractableManager::GetWidgetOffset_Implementation() const
+void UInteractionManager::PickupGroundItemToInventory(int32 ItemID)
 {
-	return WidgetOffset;
+	bool bSuccess = PickupManager.PickupToInventory(ItemID);
+	
+	if (bDebugEnabled)
+	{
+		DebugManager.LogGroundItemPickup(ItemID, true, bSuccess);
+	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// INTERACTABLE INTERFACE - HOLD INTERACTION
-// ═══════════════════════════════════════════════════════════════════════
-
-float UInteractableManager::GetTapHoldThreshold_Implementation() const
+void UInteractionManager::PickupGroundItemAndEquip(int32 ItemID)
 {
-	return Config.TapHoldThreshold;
+	bool bSuccess = PickupManager.PickupAndEquip(ItemID);
+	
+	if (bDebugEnabled)
+	{
+		DebugManager.LogGroundItemPickup(ItemID, false, bSuccess);
+	}
 }
 
-float UInteractableManager::GetHoldDuration_Implementation() const
+void UInteractionManager::UpdateFocusState(TScriptInterface<IInteractable> NewInteractable)
 {
-	return Config.HoldDuration;
-}
-
-void UInteractableManager::OnHoldInteractionStart_Implementation(AActor* Interactor)
-{
-	SetProgressBarVisible(true);
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Hold start on %s"), *GetOwner()->GetName());
-}
-
-void UInteractableManager::OnHoldInteractionUpdate_Implementation(AActor* Interactor, float Progress)
-{
-	UpdateProgress(Progress, false);
-}
-
-void UInteractableManager::OnHoldInteractionComplete_Implementation(AActor* Interactor)
-{
-	SetProgressBarVisible(false);
-	OnHoldCompleted.Broadcast(Interactor);
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Hold completed on %s"), *GetOwner()->GetName());
-}
-
-void UInteractableManager::OnHoldInteractionCancelled_Implementation(AActor* Interactor)
-{
-	SetProgressBarVisible(false);
-	OnHoldCancelled.Broadcast(Interactor);
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Hold cancelled on %s"), *GetOwner()->GetName());
-}
-
-FText UInteractableManager::GetHoldInteractionText_Implementation() const
-{
-	return Config.HoldText;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// INTERACTABLE INTERFACE - MASH INTERACTION
-// ═══════════════════════════════════════════════════════════════════════
-
-int32 UInteractableManager::GetRequiredMashCount_Implementation() const
-{
-	return Config.RequiredMashCount;
-}
-
-float UInteractableManager::GetMashDecayRate_Implementation() const
-{
-	return Config.MashDecayRate;
-}
-
-void UInteractableManager::OnMashInteractionStart_Implementation(AActor* Interactor)
-{
-	SetProgressBarVisible(true);
-	OnMashProgress.Broadcast(Interactor, 0, Config.RequiredMashCount);
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Mash start on %s"), *GetOwner()->GetName());
-}
-
-void UInteractableManager::OnMashInteractionUpdate_Implementation(AActor* Interactor, int32 CurrentCount, int32 RequiredCount, float Progress)
-{
-	UpdateProgress(Progress, false);
-	OnMashProgress.Broadcast(Interactor, CurrentCount, RequiredCount);
-	UE_LOG(LogTemp, Verbose, TEXT("InteractableManager: Mash progress %d/%d (%.1f%%)"), 
-		CurrentCount, RequiredCount, Progress * 100.0f);
-}
-
-void UInteractableManager::OnMashInteractionComplete_Implementation(AActor* Interactor)
-{
-	SetProgressBarVisible(false);
-	OnMashCompleted.Broadcast(Interactor);
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Mash completed on %s"), *GetOwner()->GetName());
-}
-
-void UInteractableManager::OnMashInteractionFailed_Implementation(AActor* Interactor)
-{
-	SetProgressBarVisible(false);
-	OnMashFailed.Broadcast(Interactor);
-	UE_LOG(LogTemp, Log, TEXT("InteractableManager: Mash failed on %s"), *GetOwner()->GetName());
-}
-
-FText UInteractableManager::GetMashInteractionText_Implementation() const
-{
-	return Config.MashText;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// INTERACTABLE INTERFACE - TOOLTIP
-// ═══════════════════════════════════════════════════════════════════════
-
-bool UInteractableManager::HasTooltip_Implementation() const
-{
-	// Can be overridden in Blueprint
-	return false;
-}
-
-UObject* UInteractableManager::GetTooltipData_Implementation() const
-{
-	// Can be overridden in Blueprint
-	return nullptr;
-}
-
-FVector UInteractableManager::GetTooltipWorldLocation_Implementation() const
-{
-	return GetOwner()->GetActorLocation() + WidgetOffset;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// PROGRESS BAR SUPPORT
-// ═══════════════════════════════════════════════════════════════════════
-
-void UInteractableManager::UpdateProgress(float Progress, bool bIsDepleting)
-{
-	if (!WidgetComponent)
+	if (NewInteractable == CurrentInteractable)
 	{
 		return;
 	}
-
-	if (UInteractableWidget* Widget = Cast<UInteractableWidget>(WidgetComponent->GetWidget()))
+	
+	AActor* Owner = GetOwner();
+	
+	if (CurrentInteractable.GetInterface())
 	{
-		Widget->SetProgress(Progress, bIsDepleting);
+		IInteractable::Execute_OnEndFocus(CurrentInteractable.GetObject(), Owner);
 	}
+	
+	CurrentInteractable = NewInteractable;
+	
+	if (CurrentInteractable.GetInterface())
+	{
+		IInteractable::Execute_OnBeginFocus(CurrentInteractable.GetObject(), Owner);
+	}
+	
+	OnCurrentInteractableChanged.Broadcast(GetCurrentInteractable());
 }
 
-void UInteractableManager::SetProgressBarVisible(bool bVisible)
+void UInteractionManager::UpdateHoldProgress()
 {
-	if (!WidgetComponent)
+	if (!PickupManager.IsHoldingForGroundItem())
 	{
+		GetWorld()->GetTimerManager().ClearTimer(HoldProgressTimer);
 		return;
 	}
-
-	if (UInteractableWidget* Widget = Cast<UInteractableWidget>(WidgetComponent->GetWidget()))
+	
+	PickupManager.UpdateHoldProgress(0.016f);
+	
+	if (PickupManager.GetHoldProgress() >= 1.0f)
 	{
-		Widget->SetProgressBarVisible(bVisible);
-	}
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════
-
-void UInteractableManager::UpdateWidgetText()
-{
-	if (!WidgetComponent)
-	{
-		return;
-	}
-
-	if (UInteractableWidget* Widget = Cast<UInteractableWidget>(WidgetComponent->GetWidget()))
-	{
-		FText DisplayText;
+		GetWorld()->GetTimerManager().ClearTimer(HoldProgressTimer);
 		
-		switch (Config.InteractionType)
-		{
-		case EInteractionType::IT_Tap:
-			DisplayText = Config.InteractionText;
-			break;
-			
-		case EInteractionType::IT_Hold:
-			DisplayText = Config.HoldText;
-			break;
-			
-		case EInteractionType::IT_Mash:
-			DisplayText = Config.MashText;
-			break;
-			
-		case EInteractionType::IT_TapOrHold:
-			// Show both options on separate lines
-			DisplayText = FText::Format(
-				FText::FromString("{0}\n{1}"),
-				Config.TapText,
-				Config.HoldActionText
-			);
-			break;
-			
-		case EInteractionType::IT_Toggle:
-		case EInteractionType::IT_Continuous:
-		default:
-			DisplayText = Config.InteractionText;
-			break;
-		}
-		
-		Widget->SetInteractionData(Config.ActionName, DisplayText);
-	}
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// HIGHLIGHT
-// ═══════════════════════════════════════════════════════════════════════
-
-void UInteractableManager::ApplyHighlight(bool bHighlight)
-{
-	for (UPrimitiveComponent* Mesh : MeshesToHighlight)
-	{
-		if (!Mesh)
-		{
-			continue;
-		}
-
-		if (bHighlight)
-		{
-			// Enable custom depth
-			Mesh->SetRenderCustomDepth(true);
-			Mesh->SetCustomDepthStencilValue(HighlightStencilValue);
-		}
-		else
-		{
-			// Disable custom depth
-			Mesh->SetRenderCustomDepth(false);
-		}
+		int32 ItemID = PickupManager.GetCurrentHoldItemID();
+		PickupManager.CancelHoldInteraction();
+		PickupGroundItemAndEquip(ItemID);
 	}
 }

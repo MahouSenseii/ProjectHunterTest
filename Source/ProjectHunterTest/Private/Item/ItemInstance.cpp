@@ -20,6 +20,25 @@ void UItemInstance::Initialize(
 	EItemRarity InRarity,
 	bool bGenerateAffixes)
 {
+	// Call corruption version with no corruption
+	InitializeWithCorruption(
+		InBaseItemHandle,
+		InItemLevel,
+		InRarity,
+		bGenerateAffixes,
+		0.0f,   // No corruption chance
+		false   // Don't force corrupted
+	);
+}
+
+void UItemInstance::InitializeWithCorruption(
+	FDataTableRowHandle InBaseItemHandle,
+	int32 InItemLevel,
+	EItemRarity InRarity,
+	bool bGenerateAffixes,
+	float CorruptionChance,
+	bool bForceCorrupted)
+{
 	BaseItemHandle = InBaseItemHandle;
 	ItemLevel = FMath::Clamp(InItemLevel, 1, 100);
 	Rarity = InRarity;
@@ -53,12 +72,25 @@ void UItemInstance::Initialize(
 			Durability = FItemDurability();
 			Durability.SetMaxDurability(Base->MaxDurability);
 			
-			// ✅ Use AffixGenerator for affix rolling!
 			// Generate affixes for Grade E and above (Grade F has no affixes)
 			if (bGenerateAffixes && Rarity > EItemRarity::IR_GradeF)
 			{
 				FAffixGenerator Generator;
-				Stats = Generator.GenerateAffixes(*Base, ItemLevel, Rarity, Seed);
+				
+				// ═══════════════════════════════════════════════
+				// CORRUPTION: Pass corruption params to generator
+				// ═══════════════════════════════════════════════
+				Stats = Generator.GenerateAffixes(
+					*Base, 
+					ItemLevel, 
+					Rarity, 
+					Seed,
+					CorruptionChance,    // Per-affix corruption chance
+					bForceCorrupted      // Force at least one corrupted
+				);
+				
+				// Calculate corruption state from generated affixes
+				CalculateCorruptionState();
 			}
 			else
 			{
@@ -121,6 +153,91 @@ void UItemInstance::Initialize(
 }
 
 // ═══════════════════════════════════════════════
+// CORRUPTION SYSTEM
+// ═══════════════════════════════════════════════
+
+void UItemInstance::CalculateCorruptionState()
+{
+	bHasCorruptedAffixes = false;
+	TotalCorruptionPoints = 0;
+	
+	// Check prefixes for negative rank points
+	for (const FPHAttributeData& Affix : Stats.Prefixes)
+	{
+		int32 Points = Affix.GetRankPointValue();
+		if (Points < 0)
+		{
+			bHasCorruptedAffixes = true;
+			TotalCorruptionPoints += Points;
+		}
+	}
+	
+	// Check suffixes for negative rank points
+	for (const FPHAttributeData& Affix : Stats.Suffixes)
+	{
+		int32 Points = Affix.GetRankPointValue();
+		if (Points < 0)
+		{
+			bHasCorruptedAffixes = true;
+			TotalCorruptionPoints += Points;
+		}
+	}
+	
+	// Check crafted mods
+	for (const FPHAttributeData& Affix : Stats.Crafted)
+	{
+		int32 Points = Affix.GetRankPointValue();
+		if (Points < 0)
+		{
+			bHasCorruptedAffixes = true;
+			TotalCorruptionPoints += Points;
+		}
+	}
+	
+	// Corrupted items cannot be modified further
+	if (bHasCorruptedAffixes)
+	{
+		bCanBeModified = false;
+		
+		UE_LOG(LogTemp, Log, TEXT("ItemInstance: Corruption detected! Points: %d"), TotalCorruptionPoints);
+	}
+}
+
+TArray<FPHAttributeData> UItemInstance::GetCorruptedAffixes() const
+{
+	TArray<FPHAttributeData> Corrupted;
+	
+	// Check prefixes
+	for (const FPHAttributeData& Affix : Stats.Prefixes)
+	{
+		if (Affix.IsCorruptedAffix())
+		{
+			Corrupted.Add(Affix);
+		}
+	}
+	
+	// Check suffixes
+	for (const FPHAttributeData& Affix : Stats.Suffixes)
+	{
+		if (Affix.IsCorruptedAffix())
+		{
+			Corrupted.Add(Affix);
+		}
+	}
+	
+	// Check crafted
+	for (const FPHAttributeData& Affix : Stats.Crafted)
+	{
+		if (Affix.IsCorruptedAffix())
+		{
+			Corrupted.Add(Affix);
+		}
+	}
+	
+	return Corrupted;
+}
+
+// ═══════════════════════════════════════════════
 // NAME GENERATION (Hunter Manga Style)
 // ═══════════════════════════════════════════════
 
@@ -167,11 +284,21 @@ FText UItemInstance::GetDisplayName()
 		return DisplayName;
 	}
 	
+	// ═══════════════════════════════════════════════
+	// CORRUPTION: Add "Corrupted" prefix for corrupted items
+	// ═══════════════════════════════════════════════
+	FString NamePrefix = "";
+	if (bHasCorruptedAffixes)
+	{
+		NamePrefix = "Corrupted ";
+	}
+	
 	// Equipment: Generate based on identification and rarity
 	if (!bIdentified)
 	{
 		DisplayName = FText::Format(
-			FText::FromString("Unidentified {0}"),
+			FText::FromString("Unidentified {0}{1}"),
+			FText::FromString(NamePrefix),
 			Base->ItemName
 		);
 	}
@@ -181,8 +308,12 @@ FText UItemInstance::GetDisplayName()
 		{
 			case EItemRarity::IR_GradeF:
 			case EItemRarity::IR_GradeE:
-				// Grade F/E: "Iron Sword"
-				DisplayName = Base->ItemName;
+				// Grade F/E: "Iron Sword" or "Corrupted Iron Sword"
+				DisplayName = FText::Format(
+					FText::FromString("{0}{1}"),
+					FText::FromString(NamePrefix),
+					Base->ItemName
+				);
 				break;
 				
 			case EItemRarity::IR_GradeD:
@@ -190,18 +321,29 @@ FText UItemInstance::GetDisplayName()
 			case EItemRarity::IR_GradeB:
 				// Grade D/C/B: "Flaming Iron Sword of Power"
 				// TODO: Generate from affixes
-				// DisplayName = UPHItemFunctionLibrary::GenerateItemName(Stats, Base);
-				DisplayName = Base->ItemName;  // Fallback
+				DisplayName = FText::Format(
+					FText::FromString("{0}{1}"),
+					FText::FromString(NamePrefix),
+					Base->ItemName
+				);
 				break;
 				
 			case EItemRarity::IR_GradeA:
 			case EItemRarity::IR_GradeS:
 				// Grade A/S: "Demon-Slaying Blade"
-				DisplayName = GenerateRareName();
+				DisplayName = FText::Format(
+					FText::FromString("{0}{1}"),
+					FText::FromString(NamePrefix),
+					GenerateRareName()
+				);
 				break;
 				
 			default:
-				DisplayName = Base->ItemName;
+				DisplayName = FText::Format(
+					FText::FromString("{0}{1}"),
+					FText::FromString(NamePrefix),
+					Base->ItemName
+				);
 				break;
 		}
 	}
@@ -255,6 +397,13 @@ UMaterialInstance* UItemInstance::GetInventoryIcon() const
 
 FLinearColor UItemInstance::GetRarityColor() const
 {
+	// Corrupted items have a special color tint
+	if (bHasCorruptedAffixes)
+	{
+		// Dark purple/red tint for corrupted items
+		return FLinearColor(0.5f, 0.0f, 0.3f, 1.0f);
+	}
+	
 	return GetItemRarityColor(Rarity);
 }
 
@@ -349,11 +498,17 @@ void UItemInstance::ApplyAffixesToCharacter(UAbilitySystemComponent* ASC)
 			continue;
 		}
 		
-		// TODO: Create and apply GameplayEffect for this affix
-		// This depends on your GAS setup
+		// ═══════════════════════════════════════════════
+		// CORRUPTION: Corrupted affixes have NEGATIVE effects
+		// They should still be applied - that's the point!
+		// ═══════════════════════════════════════════════
 		
-		UE_LOG(LogTemp, Log, TEXT("Applied affix: %s = %f"),
-			*Affix.AttributeName.ToString(), Affix.RolledStatValue);
+		// TODO: Create and apply GameplayEffect for this affix
+		
+		UE_LOG(LogTemp, Log, TEXT("Applied affix: %s = %f (Corrupted: %s)"),
+			*Affix.AttributeName.ToString(), 
+			Affix.RolledStatValue,
+			Affix.IsCorruptedAffix() ? TEXT("YES") : TEXT("NO"));
 	}
 	
 	bEffectsActive = true;
@@ -366,49 +521,13 @@ void UItemInstance::RemoveAffixesFromCharacter(UAbilitySystemComponent* ASC)
 		return;
 	}
 	
-	for (FActiveGameplayEffectHandle Handle : AppliedEffectHandles)
+	for (const FActiveGameplayEffectHandle& Handle : AppliedEffectHandles)
 	{
 		ASC->RemoveActiveGameplayEffect(Handle);
 	}
 	
 	AppliedEffectHandles.Empty();
 	bEffectsActive = false;
-}
-
-float UItemInstance::GetTotalStatValue(
-	FGameplayAttribute Attribute,
-	bool bLocalOnly,
-	bool bGlobalOnly) const
-{
-	if (!IsEquipment())
-	{
-		return 0.0f;
-	}
-	
-	float Total = 0.0f;
-	TArray<FPHAttributeData> AllAffixes = Stats.GetAllStats();
-	
-	for (const FPHAttributeData& Affix : AllAffixes)
-	{
-		if (Affix.ModifiedAttribute != Attribute)
-		{
-			continue;
-		}
-		
-		if (bLocalOnly && !Affix.bIsLocalToWeapon)
-		{
-			continue;
-		}
-		
-		if (bGlobalOnly && Affix.bIsLocalToWeapon)
-		{
-			continue;
-		}
-		
-		Total += Affix.RolledStatValue;
-	}
-	
-	return Total;
 }
 
 // ═══════════════════════════════════════════════
@@ -428,35 +547,58 @@ bool UItemInstance::UseConsumable(AActor* Target)
 		return false;
 	}
 	
-	bool bSuccess = ApplyConsumableEffects(Target);
-	
-	if (bSuccess)
+	// Apply effects
+	if (!ApplyConsumableEffects(Target))
 	{
-		RemainingUses--;
-		
-		if (Base->ConsumableData.Cooldown > 0.0f)
-		{
-			CooldownRemaining = Base->ConsumableData.Cooldown;
-			LastUseTime = GetWorld()->GetTimeSeconds();
-		}
-		
-		if (RemainingUses <= 0)
-		{
-			RemoveFromStack(1);
-		}
-		
-		return true;
+		return false;
 	}
 	
-	return false;
+	// Start cooldown
+	CooldownRemaining = Base->ConsumableData.Cooldown;
+	LastUseTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	
+	// Reduce uses or quantity
+	if (Base->ConsumableData.MaxUses > 1)
+	{
+		ReduceUses(1);
+	}
+	else
+	{
+		RemoveFromStack(1);
+	}
+	
+	return true;
 }
 
 bool UItemInstance::CanUseConsumable() const
 {
-	return IsConsumable() 
-	    && RemainingUses > 0 
-	    && CooldownRemaining <= 0.0f 
-	    && Quantity > 0;
+	if (!IsConsumable())
+	{
+		return false;
+	}
+	
+	if (CooldownRemaining > 0.0f)
+	{
+		return false;
+	}
+	
+	FItemBase* Base = GetBaseData();
+	if (!Base)
+	{
+		return false;
+	}
+	
+	if (Base->ConsumableData.MaxUses > 1 && RemainingUses <= 0)
+	{
+		return false;
+	}
+	
+	if (Quantity <= 0)
+	{
+		return false;
+	}
+	
+	return true;
 }
 
 float UItemInstance::GetCooldownProgress() const
@@ -672,6 +814,11 @@ UItemInstance* UItemInstance::SplitStack(int32 Amount)
 	NewInstance->RemainingUses = RemainingUses;
 	NewInstance->UniqueID = FGuid::NewGuid();
 	
+	// Copy corruption state
+	NewInstance->bHasCorruptedAffixes = bHasCorruptedAffixes;
+	NewInstance->TotalCorruptionPoints = TotalCorruptionPoints;
+	NewInstance->bCanBeModified = bCanBeModified;
+	
 	RemoveFromStack(Amount);
 	NewInstance->UpdateTotalWeight();
 	
@@ -725,6 +872,20 @@ int32 UItemInstance::GetCalculatedValue() const
 			case EItemRarity::IR_GradeS: Value *= 100.0f; break;
 			case EItemRarity::IR_GradeSS: Value *= 1000.0f; break;  // EX-Rank!
 			default: break;
+		}
+		
+		// ═══════════════════════════════════════════════
+		// CORRUPTION: Corrupted items worth LESS
+		// ═══════════════════════════════════════════════
+		if (bHasCorruptedAffixes)
+		{
+			// Reduce value based on corruption severity
+			float CorruptionPenalty = FMath::Clamp(
+				FMath::Abs(TotalCorruptionPoints) * 0.05f, 
+				0.0f, 
+				0.5f
+			);
+			Value *= (1.0f - CorruptionPenalty);
 		}
 		
 		// Broken items worth 10%
@@ -819,4 +980,7 @@ void UItemInstance::PostLoadInitialize()
 		UE_LOG(LogTemp, Error, TEXT("ItemInstance: Base data no longer exists for %s!"),
 			*UniqueID.ToString());
 	}
+	
+	// Recalculate corruption state after load
+	CalculateCorruptionState();
 }

@@ -1,21 +1,26 @@
-﻿// Character/Component/GroundItemPickupManager.h
+﻿// Character/Component/Interaction/GroundItemPickupManager.h
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Item/Library/ItemEnums.h"
 #include "GroundItemPickupManager.generated.h"
 
-class UGroundItemSubsystem;
+// Forward declarations
 class UItemInstance;
 class UInventoryManager;
 class UEquipmentManager;
-class AActor;
-class UWorld;
+class UGroundItemSubsystem;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogGroundItemPickupManager, Log, All);
 
 /**
- * Manages the logic for picking up ground items in the game.
+ * Ground Item Pickup Manager
+ * 
+ * SINGLE RESPONSIBILITY: Handle ground item pickup logic
+ * - Pickup to inventory (tap)
+ * - Pickup and equip (hold)
+ * - Pickup all nearby
+ * - Hold progress tracking
  */
 USTRUCT(BlueprintType)
 struct PROJECTHUNTERTEST_API FGroundItemPickupManager
@@ -26,104 +31,113 @@ public:
 	FGroundItemPickupManager();
 
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION (Blueprint-editable)
-	// ═══════════════════════════════════════════════
-
-	/** Maximum radius to pickup items */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
-	float PickupRadius = 500.0f;
-
-	/** How long to hold button to equip instead of pickup */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
-	float HoldToEquipDuration = 0.5f;
-
-	/** Show hint that holding will equip */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
-	bool bShowEquipHint = true;
-
-	// ═══════════════════════════════════════════════
 	// INITIALIZATION
 	// ═══════════════════════════════════════════════
 
 	void Initialize(AActor* Owner, UWorld* World);
 
 	// ═══════════════════════════════════════════════
+	// CONFIGURATION
+	// ═══════════════════════════════════════════════
+
+	/** Radius for "pickup all nearby" functionality */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
+	float PickupRadius;
+
+	/** Duration to hold for equip action */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
+	float HoldToEquipDuration;
+
+	/** Show equip hint when hovering over equippable items */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
+	bool bShowEquipHint;
+
+	// ═══════════════════════════════════════════════
 	// PRIMARY FUNCTIONS
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Pickup ground item to inventory (tap action)
+	 * Pickup item to inventory (tap action)
+	 * @param ItemID - Ground item ID
+	 * @return True if pickup successful
 	 */
 	bool PickupToInventory(int32 ItemID);
 
 	/**
-	 * Pickup and equip ground item directly (hold action)
+	 * Pickup item and equip immediately (hold action)
+	 * @param ItemID - Ground item ID
+	 * @return True if pickup and equip successful
 	 */
 	bool PickupAndEquip(int32 ItemID);
 
 	/**
-	 * Pickup all ground items in radius
+	 * Pickup all items in radius around location
+	 * @param Location - Center point for pickup
+	 * @return Number of items picked up
 	 */
 	int32 PickupAllNearby(FVector Location);
 
+	// ═══════════════════════════════════════════════
+	// HOLD INTERACTION
+	// ═══════════════════════════════════════════════
+
 	/**
-	 * Start hold interaction for ground item
+	 * Start hold interaction for an item
+	 * @param ItemID - Ground item ID to track
 	 */
 	void StartHoldInteraction(int32 ItemID);
 
 	/**
-	 * Update hold progress (called by InteractionManager)
+	 * Update hold progress
 	 * @param DeltaTime - Time since last update
-	 * @return True if hold completed, false if still in progress
+	 * @return True if hold completed (item was equipped)
 	 */
 	bool UpdateHoldProgress(float DeltaTime);
 
 	/**
-	 * Cancel hold interaction
+	 * Cancel current hold interaction
 	 */
 	void CancelHoldInteraction();
 
-	/**
-	 * Check if currently holding for ground item
-	 */
-	bool IsHoldingForGroundItem() const { return bIsHoldingForGroundItem; }
+	// ═══════════════════════════════════════════════
+	// GETTERS (Used by InteractionManager)
+	// ═══════════════════════════════════════════════
 
-	/**
-	 * Get current hold progress [0-1]
-	 */
-	float GetHoldProgress() const { return HoldProgress; }
+	/** Check if currently holding for ground item pickup */
+	FORCEINLINE bool IsHoldingForGroundItem() const { return bIsHoldingForGroundItem; }
 
-	/**
-	 * Get current hold item ID
-	 */
-	int32 GetCurrentHoldItemID() const { return CurrentHoldItemID; }
+	/** Get current hold progress (0.0 - 1.0) */
+	FORCEINLINE float GetHoldProgress() const { return HoldProgress; }
+
+	/** Get the item ID being held for */
+	FORCEINLINE int32 GetCurrentHoldItemID() const { return CurrentHoldItemID; }
 
 private:
 	// ═══════════════════════════════════════════════
-	// CACHED REFERENCES (Not Blueprint-exposed)
-	// ═══════════════════════════════════════════════
-
-	AActor* OwnerActor = nullptr;
-	UWorld* WorldContext = nullptr;
-	UInventoryManager* CachedInventoryManager = nullptr;
-	UEquipmentManager* CachedEquipmentManager = nullptr;
-	UGroundItemSubsystem* CachedGroundItemSubsystem = nullptr;
-
-	// ═══════════════════════════════════════════════
-	// HOLD STATE (Not Blueprint-exposed)
-	// ═══════════════════════════════════════════════
-
-	bool bIsHoldingForGroundItem = false;
-	int32 CurrentHoldItemID = -1;
-	float HoldElapsedTime = 0.0f;
-	float HoldProgress = 0.0f;
-
-	// ═══════════════════════════════════════════════
-	// INTERNAL LOGIC
+	// INTERNAL HELPERS
 	// ═══════════════════════════════════════════════
 
 	void CacheComponents();
 	bool PickupToInventoryInternal(int32 ItemID, FVector ClientLocation);
 	bool PickupAndEquipInternal(int32 ItemID, FVector ClientLocation);
 	EEquipmentSlot DetermineEquipmentSlot(UItemInstance* Item) const;
+
+	// ═══════════════════════════════════════════════
+	// CACHED REFERENCES
+	// ═══════════════════════════════════════════════
+
+	AActor* OwnerActor;
+	UWorld* WorldContext;
+	UInventoryManager* CachedInventoryManager;
+	UEquipmentManager* CachedEquipmentManager;
+	UGroundItemSubsystem* CachedGroundItemSubsystem;
+
+	// ═══════════════════════════════════════════════
+	// HOLD STATE
+	// ═══════════════════════════════════════════════
+
+	bool bIsHoldingForGroundItem;
+	int32 CurrentHoldItemID;
+	float HoldElapsedTime;
+	float HoldProgress;
 };

@@ -67,7 +67,7 @@ FLootResultBatch ULootComponent::DropLootAtLocation(
 	// Build and execute request
 	FLootRequest Request = BuildRequest(PlayerLuck, PlayerMagicFind);
 	
-	return CachedLootSubsystem->GenerateAndSpawnLoot(Request, SpawnSettings);
+	return CachedLootSubsystem->GenerateAndSpawnLoot(Request, Location, SpawnSettings);
 }
 
 FLootResultBatch ULootComponent::GenerateLoot(float PlayerLuck, float PlayerMagicFind)

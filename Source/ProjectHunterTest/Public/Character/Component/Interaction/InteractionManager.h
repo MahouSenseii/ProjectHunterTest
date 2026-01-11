@@ -1,4 +1,4 @@
-// Character/Component/InteractionManager.h
+// Character/Component/Interaction/InteractionManager.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -17,14 +17,19 @@ class UInteractableManager;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogInteractionManager, Log, All);
 
-/**
- * Delegates
- */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCurrentInteractableChanged, UInteractableManager*, NewInteractable);
 
 /**
- * Represents a manager component for handling interaction systems, including
- * tracing, validation, pickup, debugging, and state tracking for nearby interactables.
+ * Interaction Manager Component
+ * 
+ * SINGLE RESPONSIBILITY: Coordinate interaction systems
+ * - Manages sub-managers for tracing, validation, pickup, debug
+ * - Routes input to appropriate handlers
+ * - Maintains focus state
+ * 
+ * FIXES APPLIED:
+ * - Added bSystemInitialized guard to prevent double initialization
+ * - Uses correct interface function names (OnBeginFocus, OnEndFocus)
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PROJECTHUNTERTEST_API UInteractionManager : public UActorComponent
@@ -47,78 +52,70 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION - Sub-Managers (Blueprint-editable!)
+	// CONFIGURATION
 	// ═══════════════════════════════════════════════
 
 	/** Enable interaction system */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Setup")
 	bool bInteractionEnabled = true;
 
-	/** Trace Manager - Expand to configure trace settings */
+	/** Trace Manager - Handles tracing for interactables */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
 	FInteractionTraceManager TraceManager;
 
-	/** Validator Manager - Expand to configure validation settings */
+	/** Validator Manager - Validates interactions server-side */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
 	FInteractionValidatorManager ValidatorManager;
 
-	/** Pickup Manager - Expand to configure pickup settings */
+	/** Pickup Manager - Handles ground item pickup */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
 	FGroundItemPickupManager PickupManager;
 
-	/** Debug Manager - Expand to configure debug settings */
+	/** Debug Manager - Handles debug visualization */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Managers", meta = (ShowOnlyInnerProperties))
 	FInteractionDebugManager DebugManager;
 
 	// ═══════════════════════════════════════════════
-	// QUICK ACCESS SETTINGS (Optional convenience)
+	// QUICK SETTINGS
 	// ═══════════════════════════════════════════════
 
-	/** Quick toggle for debug visualization (also in DebugManager) */
+	/** Quick toggle for debug visualization */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Quick Settings")
 	bool bDebugEnabled = false;
 
 	// ═══════════════════════════════════════════════
-	// CURRENT STATE
+	// STATE
 	// ═══════════════════════════════════════════════
 
-	/** Current interactable being looked at (LOCAL ONLY) */
+	/** Current interactable being looked at */
 	UPROPERTY(BlueprintReadOnly, Category = "Interaction|State")
 	TScriptInterface<IInteractable> CurrentInteractable;
 
 	/** Current ground item ID (-1 if none) */
 	UPROPERTY(BlueprintReadOnly, Category = "Interaction|State")
-	int32 CurrentGroundItemID;
+	int32 CurrentGroundItemID = -1;
 
 	/** Called when CurrentInteractable changes */
 	UPROPERTY(BlueprintAssignable, Category = "Interaction|Events")
 	FOnCurrentInteractableChanged OnCurrentInteractableChanged;
 
 	// ═══════════════════════════════════════════════
-	// PRIMARY INTERFACE (Client-side)
+	// PRIMARY INTERFACE
 	// ═══════════════════════════════════════════════
 
-	/**
-	 * Called when interact button is pressed
-	 */
+	/** Called when interact button is pressed */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void OnInteractPressed();
 
-	/**
-	 * Called when interact button is released
-	 */
+	/** Called when interact button is released */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void OnInteractReleased();
 
-	/**
-	 * Pickup all items in radius
-	 */
+	/** Pickup all items in radius around player */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void PickupAllNearbyItems();
 
-	/**
-	 * Check for interactables (called by timer)
-	 */
+	/** Check for interactables (called on timer) */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void CheckForInteractables();
 
@@ -135,18 +132,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	int32 GetCurrentGroundItemID() const { return CurrentGroundItemID; }
 
-	/**
-	 * Check if locally controlled (safe to call after initialization)
-	 * 
-	 * NOTE: This delegates to TraceManager, which must be initialized first.
-	 *       In BeginPlay(), we check locally controlled status directly
-	 *       on the Pawn before sub-managers are initialized.
-	 */
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	bool IsLocallyControlled() const { return TraceManager.IsLocallyControlled(); }
 
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	bool IsSystemInitialized() const { return bSystemInitialized; }
+
 	// ═══════════════════════════════════════════════
-	// DEBUG COMMANDS (Blueprint callable)
+	// DEBUG
 	// ═══════════════════════════════════════════════
 
 	UFUNCTION(BlueprintCallable, Category = "Interaction|Debug")
@@ -157,32 +150,31 @@ protected:
 	// INITIALIZATION
 	// ═══════════════════════════════════════════════
 
-	/**
-	 * Initialize the interaction system (called after possession check)
-	 */
 	void InitializeInteractionSystem();
-
-	/**
-	 * Check if possessed and confirm initialization
-	 * (Fallback for multiplayer edge cases)
-	 */
 	void CheckPossessionAndInitialize();
+	void InitializeSubManagers();
+	void ApplyQuickSettings();
 
 	// ═══════════════════════════════════════════════
 	// INTERNAL LOGIC
 	// ═══════════════════════════════════════════════
 
-	void InitializeSubManagers();
-	void ApplyQuickSettings();
 	void InteractWithActor(AActor* TargetActor);
 	void PickupGroundItemToInventory(int32 ItemID);
 	void PickupGroundItemAndEquip(int32 ItemID);
 	void UpdateFocusState(TScriptInterface<IInteractable> NewInteractable);
-
-	/** Timer callback for hold progress updates */
 	void UpdateHoldProgress();
 
 private:
+	// ═══════════════════════════════════════════════
+	// STATE FLAGS
+	// ═══════════════════════════════════════════════
+
+	/** 
+	 * FIX: Guard flag to prevent double initialization
+	 */
+	bool bSystemInitialized = false;
+
 	// ═══════════════════════════════════════════════
 	// TIMERS
 	// ═══════════════════════════════════════════════

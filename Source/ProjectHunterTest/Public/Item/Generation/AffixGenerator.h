@@ -16,16 +16,13 @@
  * - Value rolling within min-max range
  * - Item level filtering
  * - Rarity-based affix count
+ * - CORRUPTION: Roll negative affixes (ERankPoints < 0)
  * 
- * Usage:
- *   FAffixGenerator Generator;
- *   FPHItemStats Stats = Generator.GenerateAffixes(BaseItem, ItemLevel, Rarity, Seed);
- * 
- * SIMPLIFIED DESIGN:
- * - No complex FAffixData/FAffixTier structs
- * - Directly uses FPHAttributeData from DataTable
- * - Each DataTable row = one complete affix
- * - Designer-friendly (no code changes needed)
+ * CORRUPTION SYSTEM:
+ * - Corruption = negative affixes that hurt the player
+ * - Uses ERankPoints to distinguish positive vs negative
+ * - CorruptionChance determines probability per affix
+ * - bForceOneCorrupted guarantees at least one negative affix
  */
 USTRUCT(BlueprintType)
 struct PROJECTHUNTERTEST_API FAffixGenerator
@@ -50,21 +47,25 @@ public:
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Generate affixes for an item
+	 * Generate affixes for an item with corruption support
 	 * @param BaseItem - Base item data
 	 * @param ItemLevel - Item level (1-100)
 	 * @param Rarity - Item rarity (determines affix count)
 	 * @param Seed - Random seed for deterministic generation
+	 * @param CorruptionChance - Chance for each affix to be corrupted (0.0 - 1.0)
+	 * @param bForceOneCorrupted - Force at least one corrupted affix
 	 * @return Generated stats with affixes
 	 */
 	FPHItemStats GenerateAffixes(
 		const FItemBase& BaseItem,
 		int32 ItemLevel,
 		EItemRarity Rarity,
-		int32 Seed) const;
+		int32 Seed,
+		float CorruptionChance = 0.0f,
+		bool bForceOneCorrupted = false) const;
 
 	/**
-	 * Generate affixes with custom affix counts
+	 * Generate affixes with custom affix counts (no corruption)
 	 * @param BaseItem - Base item data
 	 * @param ItemLevel - Item level
 	 * @param NumPrefixes - Number of prefixes to roll
@@ -80,73 +81,11 @@ public:
 		int32 Seed) const;
 
 	// ═══════════════════════════════════════════════
-	// AFFIX ROLLING (Internal)
-	// ═══════════════════════════════════════════════
-
-private:
-	/**
-	 * Roll affixes of specific type
-	 * @param AffixType - Prefix or Suffix
-	 * @param Count - Number of affixes to roll
-	 * @param ItemLevel - Item level (for filtering)
-	 * @param ItemType - Equipment type (for pool filtering)
-	 * @param ItemSubType - Weapon/armor subtype
-	 * @param RandStream - Random stream for rolling
-	 * @return Array of rolled affixes
-	 */
-	TArray<FPHAttributeData> RollAffixes(
-		EAffixes AffixType,
-		int32 Count,
-		int32 ItemLevel,
-		EItemType ItemType,
-		EItemSubType ItemSubType,
-		FRandomStream& RandStream) const;
-
-	/**
-	 * Select random affix from pool (weighted)
-	 * @param AvailableAffixes - Pool of available affixes
-	 * @param RandStream - Random stream
-	 * @return Selected affix, or nullptr if pool empty
-	 */
-	const FPHAttributeData* SelectRandomAffix(
-		const TArray<FPHAttributeData*>& AvailableAffixes,
-		FRandomStream& RandStream) const;
-
-	/**
-	 * Build available affix pool
-	 * @param AffixType - Prefix or Suffix
-	 * @param ItemType - Equipment type
-	 * @param ItemSubType - Weapon/armor subtype
-	 * @param ExcludeAffixes - Already rolled affixes to exclude
-	 * @return Array of available affixes from DataTable
-	 */
-	TArray<FPHAttributeData*> BuildAffixPool(
-		EAffixes AffixType,
-		EItemType ItemType,
-		EItemSubType ItemSubType,
-		const TArray<FName>& ExcludeAffixes) const;
-
-	/**
-	 * Create rolled affix instance from DataTable row
-	 * @param TemplateAffix - Template affix from DataTable
-	 * @param RandStream - Random stream for value rolling
-	 * @return Rolled attribute with generated UID and value
-	 */
-	FPHAttributeData CreateRolledAffix(
-		const FPHAttributeData& TemplateAffix,
-		FRandomStream& RandStream) const;
-
-	// ═══════════════════════════════════════════════
 	// AFFIX COUNT HELPERS
 	// ═══════════════════════════════════════════════
 
 	/**
 	 * Get affix counts for rarity (Hunter Manga F-SS grades)
-	 * @param Rarity - Item rarity
-	 * @param OutMinPrefixes - Minimum prefixes
-	 * @param OutMaxPrefixes - Maximum prefixes
-	 * @param OutMinSuffixes - Minimum suffixes
-	 * @param OutMaxSuffixes - Maximum suffixes
 	 */
 	static void GetAffixCountByRarity(
 		EItemRarity Rarity,
@@ -160,11 +99,71 @@ private:
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Get affix DataTable (lazy loaded)
-	 * @return Pointer to affix DataTable (DT_Affixes)
+	 * Get affix DataTable (lazy loaded with attempt tracking)
 	 */
 	UDataTable* GetAffixDataTable() const;
 
+private:
+	// ═══════════════════════════════════════════════
+	// AFFIX ROLLING (Internal)
+	// ═══════════════════════════════════════════════
+
+	/**
+	 * Roll affixes with corruption consideration
+	 * @param AffixType - Prefix or Suffix
+	 * @param Count - Number of affixes to roll
+	 * @param ItemLevel - Item level for filtering
+	 * @param ItemType - Item type for filtering
+	 * @param ItemSubType - Item subtype for filtering
+	 * @param CorruptionChance - Per-affix corruption chance
+	 * @param bMustRollOneCorrupted - Force one corrupted if not yet rolled
+	 * @param bOutHasRolledCorrupted - Output: whether a corrupted was rolled
+	 * @param RandStream - Random stream
+	 */
+	TArray<FPHAttributeData> RollAffixesWithCorruption(
+		EAffixes AffixType,
+		int32 Count,
+		int32 ItemLevel,
+		EItemType ItemType,
+		EItemSubType ItemSubType,
+		float CorruptionChance,
+		bool bMustRollOneCorrupted,
+		bool& bOutHasRolledCorrupted,
+		FRandomStream& RandStream) const;
+
+	/**
+	 * Build available affix pool filtered by corruption
+	 * @param bCorruptedOnly - If true, only return negative affixes
+	 */
+	TArray<FPHAttributeData*> BuildAffixPoolByCorruption(
+		EAffixes AffixType,
+		EItemType ItemType,
+		EItemSubType ItemSubType,
+		int32 ItemLevel,
+		bool bCorruptedOnly,
+		const TArray<FName>& ExcludeAffixes) const;
+
+	/**
+	 * Select random affix from pool (weighted)
+	 */
+	const FPHAttributeData* SelectRandomAffix(
+		const TArray<FPHAttributeData*>& AvailableAffixes,
+		FRandomStream& RandStream) const;
+
+	/**
+	 * Create rolled affix instance from DataTable row
+	 */
+	FPHAttributeData CreateRolledAffix(
+		const FPHAttributeData& TemplateAffix,
+		FRandomStream& RandStream) const;
+
+	// ═══════════════════════════════════════════════
+	// CACHED DATA
+	// ═══════════════════════════════════════════════
+
 	/** Cached affix DataTable */
 	mutable UDataTable* CachedAffixTable = nullptr;
+	
+	/** Track if we've attempted to load (prevents repeated failures) */
+	mutable bool bLoadAttempted = false;
 };

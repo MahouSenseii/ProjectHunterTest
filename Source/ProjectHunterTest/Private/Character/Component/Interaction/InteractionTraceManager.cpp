@@ -182,6 +182,15 @@ bool FInteractionTraceManager::GetCameraViewPoint(FVector& OutLocation, FRotator
 	return true;
 }
 
+void FInteractionTraceManager::GetTraceOrigin(FVector& OutCameraLocation, FVector& OutCameraDirection) const
+{
+	FRotator CameraRotation;
+	GetCameraViewPoint(OutCameraLocation, CameraRotation);
+
+	
+	OutCameraDirection = CameraRotation.Vector();
+}
+
 FVector FInteractionTraceManager::GetTraceStartLocation(const FVector& CameraLocation, const FRotator& CameraRotation) const
 {
 	// If using ALS camera and camera manager available, use enhanced origin

@@ -1,106 +1,135 @@
-﻿// Character/Component/InteractionTraceManager.h
+﻿// Character/Component/Interaction/InteractionTraceManager.h
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Interactable/Library/InteractionEnumLibrary.h"
-#include "InteractionTraceManager.generated.h" 
+#include "InteractionTraceManager.generated.h"
 
 // Forward declarations
 class IInteractable;
-class UInteractableManager;
-class UGroundItemSubsystem;
 class UItemInstance;
+class UGroundItemSubsystem;
 class APlayerController;
 class AALSPlayerCameraManager;
 struct FInteractionDebugManager;
-class AActor;
-class UWorld;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogInteractionTraceManager, Log, All);
 
 /**
- * Manages interaction traces for gameplay elements.
- * Handles the registration, update, and processing of
- * interaction traces in the game environment, ensuring
- * efficient and accurate trace management for various
- * interactive components.
+ * Interaction Trace Manager
+ * 
+ * SINGLE RESPONSIBILITY: Perform traces to find interactables
+ * - Actor interactable detection (line trace)
+ * - Ground item detection (radius query)
+ * - Camera view point calculation (ALS-aware)
  */
-
 USTRUCT(BlueprintType)
 struct PROJECTHUNTERTEST_API FInteractionTraceManager
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
 public:
-    FInteractionTraceManager();
+	FInteractionTraceManager();
 
-    // ═══════════════════════════════════════════════
-    // CONFIGURATION (Now Blueprint-editable!)
-    // ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════
+	// INITIALIZATION
+	// ═══════════════════════════════════════════════
 
-    /** Maximum interaction distance */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
-    float InteractionDistance = 300.0f;
+	void Initialize(AActor* Owner, UWorld* World);
+	void SetDebugManager(FInteractionDebugManager* InDebugManager);
 
-    /** How often to check for interactables (per second) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
-    float CheckFrequency = 0.1f;
+	// ═══════════════════════════════════════════════
+	// CONFIGURATION
+	// ═══════════════════════════════════════════════
 
-    /** Trace channel for actor detection */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
-    TEnumAsByte<ECollisionChannel> InteractionTraceChannel = ECC_Visibility;
+	/** Maximum interaction distance */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
+	float InteractionDistance;
 
-    /** Use ALS camera target location for trace origin */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
-    bool bUseALSCameraOrigin = true;
+	/** How often to check for interactables (seconds) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
+	float CheckFrequency;
 
-    /** Forward offset from camera pivot (X) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace|Offsets")
-    float OffsetForward = 0.0f;
+	/** Collision channel for interaction traces */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
+	TEnumAsByte<ECollisionChannel> InteractionTraceChannel;
 
-    /** Right offset from camera pivot (Y) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace|Offsets")
-    float OffsetRight = 0.0f;
+	/** Use ALS camera origin calculation */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace|ALS")
+	bool bUseALSCameraOrigin;
 
-    /** Up offset from camera pivot (Z) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace|Offsets")
-    float OffsetUp = 60.0f;
+	/** Forward offset from pivot */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace|ALS", meta = (EditCondition = "bUseALSCameraOrigin"))
+	float OffsetForward;
 
-    // ═══════════════════════════════════════════════
-    // INITIALIZATION
-    // ═══════════════════════════════════════════════
+	/** Right offset from pivot */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace|ALS", meta = (EditCondition = "bUseALSCameraOrigin"))
+	float OffsetRight;
 
-    void Initialize(AActor* Owner, UWorld* World);
-    void SetDebugManager(FInteractionDebugManager* InDebugManager);
+	/** Up offset from pivot */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace|ALS", meta = (EditCondition = "bUseALSCameraOrigin"))
+	float OffsetUp;
 
-    // ═══════════════════════════════════════════════
-    // PRIMARY FUNCTIONS
-    // ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════
+	// PRIMARY FUNCTIONS
+	// ═══════════════════════════════════════════════
 
-    TScriptInterface<IInteractable> TraceForActorInteractable();
-    UItemInstance* FindNearestGroundItem(int32& OutItemID);
-    bool GetCameraViewPoint(FVector& OutLocation, FRotator& OutRotation) const;
-    FVector GetTraceStartLocation(const FVector& CameraLocation, const FRotator& CameraRotation) const;
-    FVector GetTraceEndLocation(const FVector& CameraLocation, const FRotator& CameraRotation) const;
-    const FHitResult& GetLastTraceResult() const { return LastTraceResult; }
-    bool IsLocallyControlled() const;
+	/**
+	 * Trace for actor-based interactables
+	 * @return Interface to found interactable, or null
+	 */
+	TScriptInterface<IInteractable> TraceForActorInteractable();
+
+	/**
+	 * Find nearest ground item within interaction distance
+	 * @param OutItemID - Output item ID
+	 * @return Item instance if found
+	 */
+	UItemInstance* FindNearestGroundItem(int32& OutItemID);
+
+	/**
+	 * Get camera view point with ALS-style offsets
+	 * @param OutLocation - Camera location
+	 * @param OutRotation - Camera rotation
+	 * @return True if successful
+	 */
+	bool GetCameraViewPoint(FVector& OutLocation, FRotator& OutRotation) const;
+
+
+	void GetTraceOrigin(FVector& OutCameraLocation,FVector& OutCameraDirection) const;
+	
+	/**
+	 * Check if owner is locally controlled
+	 */
+	bool IsLocallyControlled() const;
+
+	/** Get last trace hit result */
+	const FHitResult& GetLastTraceResult() const { return LastTraceResult; }
 
 private:
-    // ═══════════════════════════════════════════════
-    // CACHED REFERENCES (Not Blueprint-exposed)
-    // ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════
+	// INTERNAL HELPERS
+	// ═══════════════════════════════════════════════
 
-    
-    AActor* OwnerActor = nullptr;
-    UWorld* WorldContext = nullptr;
-    APlayerController* CachedPlayerController = nullptr;
-    AALSPlayerCameraManager* CachedALSCameraManager = nullptr;
-    UGroundItemSubsystem* CachedGroundItemSubsystem = nullptr;
-    FInteractionDebugManager* DebugManager = nullptr;
-    
-    FHitResult LastTraceResult;
+	void CacheComponents();
+	FVector GetTraceStartLocation(const FVector& CameraLocation, const FRotator& CameraRotation) const;
+	FVector GetTraceEndLocation(const FVector& CameraLocation, const FRotator& CameraRotation) const;
+	bool PerformLineTrace(const FVector& Start, const FVector& End, FHitResult& OutHit);
+	bool IsActorInteractable(AActor* Actor) const;
 
-    void CacheComponents();
-    bool PerformLineTrace(const FVector& Start, const FVector& End, FHitResult& OutHit);
-    bool IsActorInteractable(AActor* Actor) const;
+	// ═══════════════════════════════════════════════
+	// CACHED REFERENCES
+	// ═══════════════════════════════════════════════
+
+	AActor* OwnerActor;
+	UWorld* WorldContext;
+	APlayerController* CachedPlayerController;
+	AALSPlayerCameraManager* CachedALSCameraManager;
+	UGroundItemSubsystem* CachedGroundItemSubsystem;
+	FInteractionDebugManager* DebugManager;
+
+	// ═══════════════════════════════════════════════
+	// STATE
+	// ═══════════════════════════════════════════════
+
+	FHitResult LastTraceResult;
 };

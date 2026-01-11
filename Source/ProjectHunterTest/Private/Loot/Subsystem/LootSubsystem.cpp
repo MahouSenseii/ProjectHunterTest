@@ -16,10 +16,8 @@ void ULootSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	
-	// Cache world reference for faster subsystem lookups
 	CachedWorld = GetWorld();
 	
-	// Default registry path (can be overridden via config)
 	if (LootSourceRegistryPath.IsNull())
 	{
 		LootSourceRegistryPath = TSoftObjectPtr<UDataTable>(
@@ -83,198 +81,237 @@ FLootResultBatch ULootSubsystem::GenerateLoot(const FLootRequest& Request)
 	FinalSettings = ApplyGlobalModifiers(FinalSettings);
 	FinalSettings = ApplyPlayerModifiers(FinalSettings, Request.PlayerLuck, Request.PlayerMagicFind);
 	
-	// Determine seed
-	int32 Seed = Request.Seed != 0 ? Request.Seed : FMath::Rand();
+	// ═══════════════════════════════════════════════
+	// FIX: Proper seed fallback generation
+	// ═══════════════════════════════════════════════
+	int32 Seed = Request.Seed;
+	if (Seed == 0)
+	{
+		Seed = GetTypeHash(Request.SourceID) ^ FDateTime::Now().GetTicks();
+		if (Seed == 0)
+		{
+			Seed = 1;
+		}
+	}
 	
 	// Generate loot
-	Batch = LootGenerator.GenerateLootWithSource(
-		*LootTable,
-		FinalSettings,
-		Source.Category,
-		Seed,
-		GetWorld()
-	);
-	
-	// Add currency and experience from source
-	FRandomStream RandStream(Seed);
-	if (Source.MaxCurrency > 0)
-	{
-		Batch.CurrencyDropped = RandStream.RandRange(Source.MinCurrency, Source.MaxCurrency);
-		
-		// Apply magic find to currency
-		Batch.CurrencyDropped = FMath::RoundToInt(
-			Batch.CurrencyDropped * (1.0f + Request.PlayerMagicFind * 0.005f)
-		);
-	}
-	
-	Batch.ExperienceReward = Source.ExperienceReward;
+	Batch = LootGenerator.GenerateLoot(*LootTable, FinalSettings, Seed, this);
 	Batch.SourceID = Request.SourceID;
-	Batch.GenerationSeed = Seed;
 	
-	// Scale with player count if enabled
-	if (Source.bScaleWithPlayerCount && Request.PlayerCount > 1)
-	{
-		float ScaleMultiplier = 1.0f + (Request.PlayerCount - 1) * 0.5f;
-		Batch.CurrencyDropped = FMath::RoundToInt(Batch.CurrencyDropped * ScaleMultiplier);
-	}
+	OnLootGenerated.Broadcast(Batch, Request.SourceID);
 	
-	// Broadcast event
-	if (Batch.TotalItemCount > 0 || Batch.CurrencyDropped > 0)
-	{
-		OnLootGenerated.Broadcast(Batch, Request.SourceID);
-	}
-	
-	UE_LOG(LogLootSubsystem, Log, TEXT("Generated loot from '%s': %d items, %d currency"),
-		*Request.SourceID.ToString(), Batch.TotalItemCount, Batch.CurrencyDropped);
+	UE_LOG(LogLootSubsystem, Verbose, TEXT("GenerateLoot: Generated %d items from source '%s'"),
+		Batch.Results.Num(), *Request.SourceID.ToString());
 	
 	return Batch;
 }
 
-FLootResultBatch ULootSubsystem::GenerateAndSpawnLoot(
-	const FLootRequest& Request,
-	const FLootSpawnSettings& SpawnSettings)
-{
-	FLootResultBatch Results = GenerateLoot(Request);
-	
-	if (Results.TotalItemCount > 0)
-	{
-		SpawnLootResults(Results, SpawnSettings);
-	}
-	
-	return Results;
-}
-
 // ═══════════════════════════════════════════════════════════════════════
-// PRIMARY API - SPAWNING
+// SPAWNING
 // ═══════════════════════════════════════════════════════════════════════
 
-void ULootSubsystem::SpawnLootResults(
-	const FLootResultBatch& Results,
-	const FLootSpawnSettings& SpawnSettings)
+bool ULootSubsystem::SpawnLootAtLocation(const FLootResultBatch& Batch, FVector Location, float SpreadRadius)
 {
 	if (!EnsureGroundItemSubsystem())
 	{
-		UE_LOG(LogLootSubsystem, Error, TEXT("SpawnLootResults: GroundItemSubsystem unavailable"));
-		return;
+		UE_LOG(LogLootSubsystem, Error, TEXT("SpawnLootAtLocation: GroundItemSubsystem not available"));
+		return false;
 	}
 	
-	if (Results.Results.Num() == 0)
+	if (Batch.Results.Num() == 0)
 	{
-		return;
+		return true;
 	}
 	
-	// Calculate spawn positions
-	TArray<FVector> Positions = CalculateScatterPositions(SpawnSettings, Results.Results.Num());
+	FRandomStream SpreadRandom(GetTypeHash(Location));
 	
-	// Spawn each item
-	for (int32 i = 0; i < Results.Results.Num(); i++)
+	for (const FLootResult& Result : Batch.Results)
 	{
-		const FLootResult& Result = Results.Results[i];
-		
 		if (!Result.IsValid())
 		{
 			continue;
 		}
 		
-		FVector ItemLocation = Positions.IsValidIndex(i) ? Positions[i] : SpawnSettings.SpawnLocation;
-		
-		int32 GroundItemID = CachedGroundItemSubsystem->AddItemToGround(Result.Item, ItemLocation);
-		
-		if (GroundItemID >= 0)
+		FVector SpawnLocation = Location;
+		if (SpreadRadius > 0.0f)
 		{
-			OnLootSpawned.Broadcast(Result.Item, ItemLocation, GroundItemID);
+			// Random direction on XY plane
+			FVector RandomDir = SpreadRandom.VRand();
+			RandomDir.Z = 0.0f;
+			RandomDir.Normalize();
+
+			float Distance = SpreadRandom.FRandRange(0.0f, SpreadRadius);
+			SpawnLocation += RandomDir * Distance;
 		}
-		else
+		
+		int32 GroundItemID = CachedGroundItemSubsystem->AddItemToGround(Result.Item, SpawnLocation);
+		
+		if (GroundItemID != INDEX_NONE)
 		{
-			UE_LOG(LogLootSubsystem, Warning, TEXT("Failed to spawn item on ground"));
+			OnLootSpawned.Broadcast(Result.Item, SpawnLocation, GroundItemID);
 		}
 	}
 	
-	UE_LOG(LogLootSubsystem, Log, TEXT("Spawned %d items at %s"),
-		Results.Results.Num(), *SpawnSettings.SpawnLocation.ToString());
+	return true;
 }
 
-int32 ULootSubsystem::SpawnItemAtLocation(UItemInstance* Item, FVector Location)
+FLootResultBatch ULootSubsystem::GenerateAndSpawnLoot(const FLootRequest& Request, FLootSpawnSettings SpawnSettings)
 {
-	if (!Item)
+	FLootResultBatch Batch = GenerateLoot(Request);
+	
+	if (Batch.Results.Num() > 0)
 	{
-		return -1;
+		SpawnLootAtLocation(Batch, SpawnSettings.SpawnLocation, SpawnSettings.ScatterRadius);
 	}
 	
-	if (!EnsureGroundItemSubsystem())
-	{
-		return -1;
-	}
-	
-	int32 GroundItemID = CachedGroundItemSubsystem->AddItemToGround(Item, Location);
-	
-	if (GroundItemID >= 0)
-	{
-		OnLootSpawned.Broadcast(Item, Location, GroundItemID);
-	}
-	
-	return GroundItemID;
+	return Batch;
 }
 
-TArray<FVector> ULootSubsystem::CalculateScatterPositions(
-	const FLootSpawnSettings& Settings,
-	int32 NumItems) const
+// ═══════════════════════════════════════════════════════════════════════
+// INTERNAL - REGISTRY
+// ═══════════════════════════════════════════════════════════════════════
+
+void ULootSubsystem::LoadRegistry()
 {
-	TArray<FVector> Positions;
-	Positions.Reserve(NumItems);
-	
-	if (NumItems <= 0)
+	if (LootSourceRegistryPath.IsNull())
 	{
-		return Positions;
+		UE_LOG(LogLootSubsystem, Warning, TEXT("LoadRegistry: No registry path configured"));
+		return;
 	}
 	
-	FVector BaseLocation = Settings.SpawnLocation;
-	BaseLocation.Z += Settings.HeightOffset;
+	CachedRegistry = LootSourceRegistryPath.LoadSynchronous();
 	
-	// Single item - spawn at center
-	if (NumItems == 1)
+	if (CachedRegistry)
 	{
-		Positions.Add(BaseLocation);
-		return Positions;
-	}
-	
-	if (Settings.bRandomScatter)
-	{
-		// Random scatter within radius
-		for (int32 i = 0; i < NumItems; i++)
-		{
-			float RandomAngle = FMath::FRand() * 2.0f * PI;
-			float RandomRadius = FMath::FRand() * Settings.ScatterRadius;
-			
-			FVector Offset(
-				FMath::Cos(RandomAngle) * RandomRadius,
-				FMath::Sin(RandomAngle) * RandomRadius,
-				0.0f
-			);
-			
-			Positions.Add(BaseLocation + Offset);
-		}
+		UE_LOG(LogLootSubsystem, Log, TEXT("Loaded loot registry with %d sources"), 
+			CachedRegistry->GetRowNames().Num());
 	}
 	else
 	{
-		// Organized circle pattern
-		float AngleStep = 2.0f * PI / NumItems;
+		UE_LOG(LogLootSubsystem, Error, TEXT("Failed to load loot registry from '%s'"),
+			*LootSourceRegistryPath.ToString());
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INTERNAL - LOOT TABLE LOADING
+// ═══════════════════════════════════════════════════════════════════════
+
+const FLootTable* ULootSubsystem::GetLootTableFromSource(const FLootSourceEntry& Source, FName RowName)
+{
+	if (Source.LootTable.IsNull())
+	{
+		UE_LOG(LogLootSubsystem, Warning, TEXT("GetLootTableFromSource: Source has null LootTable reference"));
+		return nullptr;
+	}
+	
+	// ═══════════════════════════════════════════════
+	// FIX: Use DataTable path as cache key, NOT row name
+	// This prevents cache collisions when multiple sources
+	// reference different DataTables with the same row names
+	// ═══════════════════════════════════════════════
+	FName CacheKey = FName(*Source.LootTable.ToString());
+	
+	UDataTable* CachedTable = nullptr;
+	
+	if (UDataTable** FoundTable = LootTableCache.Find(CacheKey))
+	{
+		CachedTable = *FoundTable;
 		
-		for (int32 i = 0; i < NumItems; i++)
+		if (!IsValid(CachedTable))
 		{
-			float Angle = i * AngleStep;
-			
-			FVector Offset(
-				FMath::Cos(Angle) * Settings.ScatterRadius,
-				FMath::Sin(Angle) * Settings.ScatterRadius,
-				0.0f
-			);
-			
-			Positions.Add(BaseLocation + Offset);
+			LootTableCache.Remove(CacheKey);
+			CachedTable = nullptr;
 		}
 	}
 	
-	return Positions;
+	if (!CachedTable)
+	{
+		CachedTable = Source.LootTable.LoadSynchronous();
+		
+		if (CachedTable)
+		{
+			LootTableCache.Add(CacheKey, CachedTable);
+			OnLootTableLoaded.Broadcast(RowName, true);
+			
+			UE_LOG(LogLootSubsystem, Verbose, TEXT("Cached loot table: %s"), *CacheKey.ToString());
+		}
+		else
+		{
+			OnLootTableLoaded.Broadcast(RowName, false);
+			UE_LOG(LogLootSubsystem, Error, TEXT("Failed to load loot table: %s"), *Source.LootTable.ToString());
+			return nullptr;
+		}
+	}
+	
+	if (!RowName.IsNone())
+	{
+		return CachedTable->FindRow<FLootTable>(RowName, TEXT("GetLootTableFromSource"));
+	}
+	
+	TArray<FName> RowNames = CachedTable->GetRowNames();
+	if (RowNames.Num() > 0)
+	{
+		return CachedTable->FindRow<FLootTable>(RowNames[0], TEXT("GetLootTableFromSource_FirstRow"));
+	}
+	
+	UE_LOG(LogLootSubsystem, Warning, TEXT("GetLootTableFromSource: DataTable has no rows"));
+	return nullptr;
+}
+
+bool ULootSubsystem::LoadLootTableAsync(const FLootSourceEntry& Source)
+{
+	const FLootTable* Table = GetLootTableFromSource(Source, Source.LootTableRowName);
+	return Table != nullptr;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INTERNAL - SETTINGS BUILDING
+// ═══════════════════════════════════════════════════════════════════════
+
+FLootDropSettings ULootSubsystem::BuildFinalSettings(const FLootSourceEntry& Source, const FLootRequest& Request) const
+{
+	FLootDropSettings Settings = Source.DefaultSettings;
+	
+	Settings.SourceLevel = Source.BaseLevel;
+	Settings.SourceRarity = Source.SourceRarity;
+	
+	if (Request.OverrideSettings.MinDrops > 0)
+	{
+		Settings.MinDrops = Request.OverrideSettings.MinDrops;
+	}
+	if (Request.OverrideSettings.MaxDrops > 0)
+	{
+		Settings.MaxDrops = Request.OverrideSettings.MaxDrops;
+	}
+	if (Request.OverrideSettings.DropChanceMultiplier != 1.0f)
+	{
+		Settings.DropChanceMultiplier = Request.OverrideSettings.DropChanceMultiplier;
+	}
+	
+	return Settings;
+}
+
+FLootDropSettings ULootSubsystem::ApplyGlobalModifiers(const FLootDropSettings& Settings) const
+{
+	FLootDropSettings Modified = Settings;
+	Modified.DropChanceMultiplier *= GlobalDropChanceMultiplier;
+	return Modified;
+}
+
+FLootDropSettings ULootSubsystem::ApplyPlayerModifiers(const FLootDropSettings& Settings, float Luck, float MagicFind) const
+{
+	FLootDropSettings Modified = Settings;
+	
+	// Luck affects RARITY (quality)
+	Modified.PlayerLuckBonus = Luck;
+	Modified.RarityBonusChance += Luck * 0.005f;
+	
+	// Magic Find affects QUANTITY
+	Modified.PlayerMagicFindBonus = MagicFind;
+	Modified.QuantityMultiplier *= (1.0f + MagicFind * 0.01f);
+	
+	return Modified;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -371,142 +408,6 @@ void ULootSubsystem::ClearLootTableCache()
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// INTERNAL - REGISTRY
-// ═══════════════════════════════════════════════════════════════════════
-
-void ULootSubsystem::LoadRegistry()
-{
-	if (LootSourceRegistryPath.IsNull())
-	{
-		UE_LOG(LogLootSubsystem, Warning, TEXT("LoadRegistry: No registry path configured"));
-		return;
-	}
-	
-	CachedRegistry = LootSourceRegistryPath.LoadSynchronous();
-	
-	if (CachedRegistry)
-	{
-		UE_LOG(LogLootSubsystem, Log, TEXT("Loaded loot registry with %d sources"), 
-			CachedRegistry->GetRowNames().Num());
-	}
-	else
-	{
-		UE_LOG(LogLootSubsystem, Error, TEXT("Failed to load loot registry from '%s'"),
-			*LootSourceRegistryPath.ToString());
-	}
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// INTERNAL - LOOT TABLE LOADING
-// ═══════════════════════════════════════════════════════════════════════
-
-const FLootTable* ULootSubsystem::GetLootTableFromSource(const FLootSourceEntry& Source, FName RowName)
-{
-	if (Source.LootTable.IsNull())
-	{
-		return nullptr;
-	}
-	
-	// Check cache first
-	UDataTable* CachedTable;
-	if (UDataTable** FoundTable = LootTableCache.Find(Source.LootTableRowName))
-	{
-		CachedTable = *FoundTable;
-	}
-	else
-	{
-		// Load synchronously
-		CachedTable = Source.LootTable.LoadSynchronous();
-		
-		if (CachedTable)
-		{
-			LootTableCache.Add(Source.LootTableRowName, CachedTable);
-			OnLootTableLoaded.Broadcast(Source.LootTableRowName, true);
-		}
-		else
-		{
-			OnLootTableLoaded.Broadcast(Source.LootTableRowName, false);
-			return nullptr;
-		}
-	}
-	
-	if (!CachedTable)
-	{
-		return nullptr;
-	}
-	
-	// Get the specific row
-	return CachedTable->FindRow<FLootTable>(RowName, TEXT("GetLootTableFromSource"));
-}
-
-bool ULootSubsystem::LoadLootTableAsync(const FLootSourceEntry& Source)
-{
-	// For now, just load synchronously
-	// TODO: Implement async loading with FStreamableManager if needed
-	const FLootTable* Table = GetLootTableFromSource(Source, Source.LootTableRowName);
-	return Table != nullptr;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// INTERNAL - SETTINGS BUILDING
-// ═══════════════════════════════════════════════════════════════════════
-
-FLootDropSettings ULootSubsystem::BuildFinalSettings(
-	const FLootSourceEntry& Source, 
-	const FLootRequest& Request) const
-{
-	FLootDropSettings Settings = Source.DefaultSettings;
-	
-	// Apply level override
-	if (Request.OverrideLevel > 0)
-	{
-		Settings.SourceLevel = Request.OverrideLevel;
-	}
-	else if (Source.DefaultSettings.SourceLevel > 0)
-	{
-		Settings.SourceLevel = Source.DefaultSettings.SourceLevel;
-	}
-	
-	return Settings;
-}
-
-FLootDropSettings ULootSubsystem::ApplyGlobalModifiers(const FLootDropSettings& Settings) const
-{
-	FLootDropSettings Modified = Settings;
-	
-	Modified.DropChanceMultiplier *= GlobalDropChanceMultiplier;
-	Modified.QuantityMultiplier *= GlobalQuantityMultiplier;
-	Modified.CorruptionChance = FMath::Clamp(
-		Modified.CorruptionChance + GlobalCorruptionChanceModifier, 
-		0.0f, 1.0f
-	);
-	
-	return Modified;
-}
-
-FLootDropSettings ULootSubsystem::ApplyPlayerModifiers(
-	const FLootDropSettings& Settings, 
-	float Luck, 
-	float MagicFind) const
-{
-	FLootDropSettings Modified = Settings;
-	
-	// Luck affects rarity (increases chance of better drops)
-	// Each point of luck = +1% rarity bonus chance
-	Modified.RarityBonusChance += Luck * 0.01f;
-	
-	// Magic Find affects quantity
-	// Each point = +0.5% quantity
-	Modified.QuantityMultiplier *= (1.0f + MagicFind * 0.005f);
-	
-	// Store for use in generation
-	Modified.PlayerLuckBonus = Luck;
-	Modified.PlayerMagicFindBonus = MagicFind;
-	
-	return Modified;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
 // INTERNAL - SUBSYSTEM CACHING
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -515,12 +416,6 @@ bool ULootSubsystem::EnsureGroundItemSubsystem()
 	if (CachedGroundItemSubsystem && IsValid(CachedGroundItemSubsystem))
 	{
 		return true;
-	}
-	
-	// Use cached world for faster lookup
-	if (!CachedWorld)
-	{
-		CachedWorld = GetWorld();
 	}
 	
 	if (CachedWorld)

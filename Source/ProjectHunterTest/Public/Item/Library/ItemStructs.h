@@ -359,6 +359,7 @@ struct FPHAttributeData : public FTableRowBase
 	/** Affix type: Prefix, Suffix, Implicit, etc. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attribute|Affix")
 	EAffixes AffixType = EAffixes::AF_Prefix;
+	
 
 	/** Affix name for item naming (e.g., "Dragon's", "of the Fang") */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attribute|Affix")
@@ -366,7 +367,9 @@ struct FPHAttributeData : public FTableRowBase
 
 	/** Rank points for quality (-10 to +10) - Also determines weight (higher tier = rarer) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attribute|Affix")
-	ERankPoints RankPoints = ERankPoints::RP_5;
+	ERankPoints RankPoints = ERankPoints::RP_0;
+
+	
 
 	// ═══════════════════════════════════════════════
 	// ITEM TYPE FILTERING 
@@ -542,6 +545,9 @@ struct FPHAttributeData : public FTableRowBase
 		int32 Weight = 1000 / FMath::Max(1, RankValue);
 		return FMath::Clamp(Weight, 1, 1000);
 	}
+	
+	bool IsCorruptedAffix() const { return AffixType == EAffixes::AF_Corrupted; }
+	bool IsValidForItemLevel(int32 Level) const {return MinValue <= Level && Level <= MaxValue; }
 };
 
 // ═══════════════════════════════════════════════════════════════════════

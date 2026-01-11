@@ -18,9 +18,9 @@ void UGroundItemSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	
-	UE_LOG(LogGroundItemSubsystem, Log, TEXT("GroundItemSubsystem: Initialized (container will be created on first use)"));
+	bIsProcessingRemoval = false;
 	
-	// DON'T create container here - world might not be ready!
+	UE_LOG(LogGroundItemSubsystem, Log, TEXT("GroundItemSubsystem: Initialized"));
 }
 
 void UGroundItemSubsystem::Deinitialize()
@@ -44,7 +44,6 @@ void UGroundItemSubsystem::Deinitialize()
 
 void UGroundItemSubsystem::EnsureISMContainerExists()
 {
-	// Already exists
 	if (ISMContainerActor && IsValid(ISMContainerActor))
 	{
 		return;
@@ -57,18 +56,16 @@ void UGroundItemSubsystem::EnsureISMContainerExists()
 		return;
 	}
 
-	// Check if world is ready for spawning
 	if (!World->HasBegunPlay())
 	{
-		UE_LOG(LogGroundItemSubsystem, Warning, TEXT("EnsureISMContainerExists: World hasn't begun play yet, deferring creation"));
+		UE_LOG(LogGroundItemSubsystem, Warning, TEXT("EnsureISMContainerExists: World hasn't begun play yet"));
 		return;
 	}
 
-	// Spawn the container actor
 	FActorSpawnParameters Params;
 	Params.Name = FName("GroundItems_ISMContainer");
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	Params.ObjectFlags = RF_Transient; // Don't save this actor
+	Params.ObjectFlags = RF_Transient;
 	
 	ISMContainerActor = World->SpawnActor<AISMContainerActor>(
 		AISMContainerActor::StaticClass(),
@@ -94,7 +91,6 @@ UInstancedStaticMeshComponent* UGroundItemSubsystem::GetOrCreateISMComponent(USt
 		return nullptr;
 	}
 
-	// Check cache first
 	if (UInstancedStaticMeshComponent** FoundISM = MeshToISM.Find(Mesh))
 	{
 		if (*FoundISM && IsValid(*FoundISM))
@@ -103,7 +99,6 @@ UInstancedStaticMeshComponent* UGroundItemSubsystem::GetOrCreateISMComponent(USt
 		}
 	}
 
-	// Need to create new ISM component
 	EnsureISMContainerExists();
 	
 	if (!ISMContainerActor)
@@ -111,7 +106,6 @@ UInstancedStaticMeshComponent* UGroundItemSubsystem::GetOrCreateISMComponent(USt
 		return nullptr;
 	}
 
-	// Create new ISM component on the container actor
 	UInstancedStaticMeshComponent* NewISM = NewObject<UInstancedStaticMeshComponent>(
 		ISMContainerActor,
 		*FString::Printf(TEXT("ISM_%s"), *Mesh->GetName())
@@ -124,7 +118,6 @@ UInstancedStaticMeshComponent* UGroundItemSubsystem::GetOrCreateISMComponent(USt
 	NewISM->RegisterComponent();
 	NewISM->AttachToComponent(ISMContainerActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
 
-	// Cache it
 	MeshToISM.Add(Mesh, NewISM);
 
 	UE_LOG(LogGroundItemSubsystem, Log, TEXT("Created ISM component for mesh: %s"), *Mesh->GetName());
@@ -134,20 +127,15 @@ UInstancedStaticMeshComponent* UGroundItemSubsystem::GetOrCreateISMComponent(USt
 
 void UGroundItemSubsystem::ReindexAfterRemoval(UInstancedStaticMeshComponent* ISMComponent, int32 RemovedIndex)
 {
-	// FIX: When an ISM instance is removed at index N, all instances at index > N
-	// are shifted down by 1. We need to update our tracking to match.
-	
 	for (TPair<int32, FGroundItemISMData>& Pair : ItemISMData)
 	{
 		FGroundItemISMData& Data = Pair.Value;
 		
-		// Only affect items in the same ISM component
 		if (Data.ISMComponent != ISMComponent)
 		{
 			continue;
 		}
 
-		// If this item's index was higher than the removed index, shift it down
 		if (Data.InstanceIndex > RemovedIndex)
 		{
 			Data.InstanceIndex--;
@@ -164,7 +152,6 @@ void UGroundItemSubsystem::ReindexAfterRemoval(UInstancedStaticMeshComponent* IS
 
 int32 UGroundItemSubsystem::AddItemToGround(UItemInstance* Item, FVector Location, FRotator Rotation)
 {
-	// Ensure container exists before adding items
 	EnsureISMContainerExists();
 	
 	if (!ISMContainerActor)
@@ -186,7 +173,6 @@ int32 UGroundItemSubsystem::AddItemToGround(UItemInstance* Item, FVector Locatio
 		return -1;
 	}
 
-	// Get or create ISM for this mesh type
 	UInstancedStaticMeshComponent* ISM = GetOrCreateISMComponent(Mesh);
 	if (!ISM)
 	{
@@ -194,7 +180,6 @@ int32 UGroundItemSubsystem::AddItemToGround(UItemInstance* Item, FVector Locatio
 		return -1;
 	}
 
-	// Add instance to ISM
 	FTransform Transform(Rotation, Location, FVector::OneVector);
 	int32 ISMInstanceIndex = ISM->AddInstance(Transform);
 
@@ -204,14 +189,10 @@ int32 UGroundItemSubsystem::AddItemToGround(UItemInstance* Item, FVector Locatio
 		return -1;
 	}
 
-	// Generate unique ID
 	int32 ItemID = NextItemID++;
 
-	// Store all data
 	GroundItems.Add(ItemID, Item);
 	InstanceLocations.Add(ItemID, Location);
-	
-	// FIX: Use unified ISM tracking struct
 	ItemISMData.Add(ItemID, FGroundItemISMData(ISM, ISMInstanceIndex, Mesh));
 
 	UE_LOG(LogGroundItemSubsystem, Log, TEXT("AddItemToGround: Added item '%s' (ID: %d, ISMIndex: %d) at %s"), 
@@ -222,7 +203,36 @@ int32 UGroundItemSubsystem::AddItemToGround(UItemInstance* Item, FVector Locatio
 
 UItemInstance* UGroundItemSubsystem::RemoveItemFromGround(int32 ItemID)
 {
-	// Find item
+	// ═══════════════════════════════════════════════
+	// FIX: Guard against concurrent removal operations
+	// ═══════════════════════════════════════════════
+	if (bIsProcessingRemoval)
+	{
+		UE_LOG(LogGroundItemSubsystem, Warning, 
+			TEXT("RemoveItemFromGround: Already processing a removal, queuing item %d"), ItemID);
+		
+		PendingRemovals.AddUnique(ItemID);
+		return nullptr;
+	}
+	
+	bIsProcessingRemoval = true;
+	
+	UItemInstance* Result = RemoveItemFromGroundInternal(ItemID);
+	
+	// Process any queued removals
+	while (PendingRemovals.Num() > 0)
+	{
+		int32 QueuedID = PendingRemovals.Pop();
+		RemoveItemFromGroundInternal(QueuedID);
+	}
+	
+	bIsProcessingRemoval = false;
+	
+	return Result;
+}
+
+UItemInstance* UGroundItemSubsystem::RemoveItemFromGroundInternal(int32 ItemID)
+{
 	UItemInstance** FoundItem = GroundItems.Find(ItemID);
 	if (!FoundItem)
 	{
@@ -232,35 +242,86 @@ UItemInstance* UGroundItemSubsystem::RemoveItemFromGround(int32 ItemID)
 
 	UItemInstance* Item = *FoundItem;
 
-	// Find ISM data
 	FGroundItemISMData* ISMData = ItemISMData.Find(ItemID);
 	if (ISMData && ISMData->IsValid())
 	{
 		UInstancedStaticMeshComponent* ISM = ISMData->ISMComponent;
 		int32 InstanceIndex = ISMData->InstanceIndex;
 
-		// Remove the instance from ISM
-		ISM->RemoveInstance(InstanceIndex);
-		
-		// FIX: Re-index all items in this ISM that had higher indices
-		// This is critical - without this, subsequent removals fail!
-		ReindexAfterRemoval(ISM, InstanceIndex);
-		
-		UE_LOG(LogGroundItemSubsystem, Log, TEXT("RemoveItemFromGround: Removed item ID %d (ISMIndex was %d)"), 
-			ItemID, InstanceIndex);
+		if (InstanceIndex >= 0 && InstanceIndex < ISM->GetInstanceCount())
+		{
+			ISM->RemoveInstance(InstanceIndex);
+			ReindexAfterRemoval(ISM, InstanceIndex);
+			
+			UE_LOG(LogGroundItemSubsystem, Log, TEXT("RemoveItemFromGround: Removed item ID %d (ISMIndex was %d)"), 
+				ItemID, InstanceIndex);
+		}
+		else
+		{
+			UE_LOG(LogGroundItemSubsystem, Error, 
+				TEXT("RemoveItemFromGround: Invalid ISM index %d for item %d (ISM has %d instances)"),
+				InstanceIndex, ItemID, ISM->GetInstanceCount());
+		}
 	}
 	else
 	{
 		UE_LOG(LogGroundItemSubsystem, Warning, TEXT("RemoveItemFromGround: No valid ISM data for item ID %d"), ItemID);
 	}
 
-	// Clean up tracking data
 	GroundItems.Remove(ItemID);
 	InstanceLocations.Remove(ItemID);
 	ItemISMData.Remove(ItemID);
 
 	return Item;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// BATCH OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+TArray<UItemInstance*> UGroundItemSubsystem::RemoveMultipleItemsFromGround(const TArray<int32>& ItemIDs)
+{
+	TArray<UItemInstance*> RemovedItems;
+	RemovedItems.Reserve(ItemIDs.Num());
+	
+	if (ItemIDs.Num() == 0)
+	{
+		return RemovedItems;
+	}
+	
+	bIsProcessingRemoval = true;
+	
+	// Sort by ISM index descending for efficient removal
+	TArray<TPair<int32, int32>> SortedItems;
+	for (int32 ItemID : ItemIDs)
+	{
+		if (FGroundItemISMData* Data = ItemISMData.Find(ItemID))
+		{
+			SortedItems.Add(TPair<int32, int32>(ItemID, Data->InstanceIndex));
+		}
+	}
+	
+	SortedItems.Sort([](const TPair<int32, int32>& A, const TPair<int32, int32>& B)
+	{
+		return A.Value > B.Value;
+	});
+	
+	for (const TPair<int32, int32>& Pair : SortedItems)
+	{
+		if (UItemInstance* Item = RemoveItemFromGroundInternal(Pair.Key))
+		{
+			RemovedItems.Add(Item);
+		}
+	}
+	
+	bIsProcessingRemoval = false;
+	
+	return RemovedItems;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// QUERIES
+// ═══════════════════════════════════════════════════════════════════════
 
 UItemInstance* UGroundItemSubsystem::GetItemByID(int32 ItemID) const
 {
@@ -352,7 +413,6 @@ int32 UGroundItemSubsystem::GetInstanceID(UItemInstance* Item) const
 
 void UGroundItemSubsystem::UpdateItemLocation(int32 ItemID, FVector NewLocation)
 {
-	// Find ISM data
 	FGroundItemISMData* ISMData = ItemISMData.Find(ItemID);
 	if (!ISMData || !ISMData->IsValid())
 	{
@@ -363,26 +423,19 @@ void UGroundItemSubsystem::UpdateItemLocation(int32 ItemID, FVector NewLocation)
 	UInstancedStaticMeshComponent* ISM = ISMData->ISMComponent;
 	int32 InstanceIndex = ISMData->InstanceIndex;
 
-	// Get current transform
 	FTransform CurrentTransform;
 	ISM->GetInstanceTransform(InstanceIndex, CurrentTransform, true);
 
-	// Update location
 	FTransform NewTransform = CurrentTransform;
 	NewTransform.SetLocation(NewLocation);
 
-	// Apply to ISM
 	ISM->UpdateInstanceTransform(InstanceIndex, NewTransform, true);
 
-	// Update tracking
 	InstanceLocations.Add(ItemID, NewLocation);
-
-	UE_LOG(LogGroundItemSubsystem, Verbose, TEXT("UpdateItemLocation: Item %d moved to %s"), ItemID, *NewLocation.ToString());
 }
 
 void UGroundItemSubsystem::ClearAllItems()
 {
-	// Clear all ISM instances
 	for (TPair<UStaticMesh*, UInstancedStaticMeshComponent*>& Pair : MeshToISM)
 	{
 		if (Pair.Value && IsValid(Pair.Value))
@@ -391,12 +444,10 @@ void UGroundItemSubsystem::ClearAllItems()
 		}
 	}
 
-	// Clear tracking data
 	GroundItems.Empty();
 	InstanceLocations.Empty();
 	ItemISMData.Empty();
-	
-	// Don't reset NextItemID - keep it incrementing for uniqueness
+	PendingRemovals.Empty();
 
 	UE_LOG(LogGroundItemSubsystem, Log, TEXT("ClearAllItems: All ground items cleared"));
 }
