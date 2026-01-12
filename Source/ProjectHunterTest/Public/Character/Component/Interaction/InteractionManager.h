@@ -95,7 +95,7 @@ public:
 
 	/** Default action name for ground items */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")
-	FName GroundItemActionName = FName("Pickup");
+	UInputAction* GroundItemActionInput;
 
 	/** Default text for ground item pickup */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")

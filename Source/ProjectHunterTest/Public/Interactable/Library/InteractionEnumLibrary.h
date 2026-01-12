@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "InputAction.h"
 #include "InteractionEnumLibrary.generated.h"
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -141,7 +141,7 @@ public:
 	 * @return Action name (e.g., "Interact", "Pickup", "Open")
 	 */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Interaction")
-	FName GetInteractionActionName() const;
+	UInputAction* GetInputAction() const;
 
 	/**
 	 * Get interaction display text

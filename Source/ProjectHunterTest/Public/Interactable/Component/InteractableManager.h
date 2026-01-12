@@ -128,7 +128,7 @@ public:
 	virtual void OnBeginFocus_Implementation(AActor* Interactor) override;
 	virtual void OnEndFocus_Implementation(AActor* Interactor) override;
 	virtual EInteractionType GetInteractionType_Implementation() const override;
-	virtual FName GetInteractionActionName_Implementation() const override;
+	virtual UInputAction* GetInputAction_Implementation() const override;
 	virtual FText GetInteractionText_Implementation() const override;
 	virtual FVector GetWidgetOffset_Implementation() const override;
 

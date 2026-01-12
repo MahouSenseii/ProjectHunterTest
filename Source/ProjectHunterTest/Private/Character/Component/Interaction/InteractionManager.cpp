@@ -685,11 +685,11 @@ void UInteractionManager::UpdateWidgetForActorInteractable(UInteractableManager*
 	}
 
 	// Get interaction data from interactable
-	FName ActionName = Interactable->Config.ActionName;
+	
 	FText Description = Interactable->Config.InteractionText;
 
 	// Update widget
-	InteractionWidget->SetInteractionData(ActionName, Description);
+	InteractionWidget->SetInteractionData(Interactable->Config.InputAction, Description);
 	InteractionWidget->SetWidgetState(EInteractionWidgetState::IWS_Idle);
 	InteractionWidget->Show();
 }
@@ -715,7 +715,7 @@ void UInteractionManager::UpdateWidgetForGroundItem(int32 GroundItemID)
 	}
 
 	// Update widget
-	InteractionWidget->SetInteractionData(GroundItemActionName, Description);
+	InteractionWidget->SetInteractionData(GroundItemActionInput, Description);
 	InteractionWidget->SetWidgetState(EInteractionWidgetState::IWS_Idle);
 	InteractionWidget->Show();
 }

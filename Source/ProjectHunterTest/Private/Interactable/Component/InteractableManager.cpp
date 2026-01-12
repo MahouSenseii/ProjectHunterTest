@@ -237,11 +237,10 @@ EInteractionType UInteractableManager::GetInteractionType_Implementation() const
 	return Config.InteractionType;
 }
 
-FName UInteractableManager::GetInteractionActionName_Implementation() const
+UInputAction* UInteractableManager::GetInputAction_Implementation() const
 {
-	return Config.InputAction ? Config.InputAction->GetName() : NAME_None;
+	return Config.InputAction;
 }
-
 FText UInteractableManager::GetInteractionText_Implementation() const
 {
 	// Return appropriate text based on interaction type
@@ -426,21 +425,13 @@ void UInteractableManager::UpdateWidgetText()
 	{
 		return;
 	}
-
-	// ═══════════════════════════════════════════════
-	// VALIDATION: Ensure InputAction is set
-	// ═══════════════════════════════════════════════
+	
 	if (!Config.InputAction)
 	{
 		UE_LOG(LogTemp, Error, TEXT("InteractableManager: InputAction not set on %s! Widget will not show key icon."), 
 			*GetOwner()->GetName());
-		
-		// Still update text, but icon won't show (will use fallback if configured)
-		Widget->SetInteractionDataWithKey(
-			EKeys::Invalid, 
-			GetDisplayTextForCurrentType()
-		);
-		return;
+
+		Widget->SetInteractionData(GetInputAction(), GetDisplayTextForCurrentType());
 	}
 }
 
