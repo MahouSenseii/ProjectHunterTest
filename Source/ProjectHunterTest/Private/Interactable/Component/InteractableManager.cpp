@@ -239,7 +239,7 @@ EInteractionType UInteractableManager::GetInteractionType_Implementation() const
 
 FName UInteractableManager::GetInteractionActionName_Implementation() const
 {
-	return Config.ActionName;
+	return Config.InputAction ? Config.InputAction->GetName() : NAME_None;
 }
 
 FText UInteractableManager::GetInteractionText_Implementation() const
@@ -393,7 +393,7 @@ void UInteractableManager::UpdateProgress(float Progress, bool bIsDepleting)
 
 	if (UInteractableWidget* Widget = Cast<UInteractableWidget>(WidgetComponent->GetWidget()))
 	{
-		Widget->SetProgress(Progress, bIsDepleting);
+		Widget->SetProgress(Progress);
 	}
 }
 
@@ -421,43 +421,56 @@ void UInteractableManager::UpdateWidgetText()
 		return;
 	}
 
-	if (UInteractableWidget* Widget = Cast<UInteractableWidget>(WidgetComponent->GetWidget()))
+	UInteractableWidget* Widget = Cast<UInteractableWidget>(WidgetComponent->GetWidget());
+	if (!Widget)
 	{
-		FText DisplayText;
+		return;
+	}
+
+	// ═══════════════════════════════════════════════
+	// VALIDATION: Ensure InputAction is set
+	// ═══════════════════════════════════════════════
+	if (!Config.InputAction)
+	{
+		UE_LOG(LogTemp, Error, TEXT("InteractableManager: InputAction not set on %s! Widget will not show key icon."), 
+			*GetOwner()->GetName());
 		
-		switch (Config.InteractionType)
-		{
-		case EInteractionType::IT_Tap:
-			DisplayText = Config.InteractionText;
-			break;
-			
-		case EInteractionType::IT_Hold:
-			DisplayText = Config.HoldText;
-			break;
-			
-		case EInteractionType::IT_Mash:
-			DisplayText = Config.MashText;
-			break;
-			
-		case EInteractionType::IT_TapOrHold:
-			// Show both options on separate lines
-			DisplayText = FText::Format(
-				FText::FromString("{0}\n{1}"),
-				Config.TapText,
-				Config.HoldActionText
-			);
-			break;
-			
-		case EInteractionType::IT_Toggle:
-		case EInteractionType::IT_Continuous:
-		default:
-			DisplayText = Config.InteractionText;
-			break;
-		}
-		
-		Widget->SetInteractionData(Config.ActionName, DisplayText);
+		// Still update text, but icon won't show (will use fallback if configured)
+		Widget->SetInteractionDataWithKey(
+			EKeys::Invalid, 
+			GetDisplayTextForCurrentType()
+		);
+		return;
 	}
 }
+
+FText UInteractableManager::GetDisplayTextForCurrentType() const
+{
+	switch (Config.InteractionType)
+	{
+	case EInteractionType::IT_Tap:
+		return Config.InteractionText;
+			
+	case EInteractionType::IT_Hold:
+		return Config.HoldText;
+			
+	case EInteractionType::IT_Mash:
+		return Config.MashText;
+			
+	case EInteractionType::IT_TapOrHold:
+		// Show both options on separate lines
+		return FText::Format(
+			FText::FromString("{0}\n{1}"),
+			Config.TapText,
+			Config.HoldActionText
+		);
+			
+	case EInteractionType::IT_Toggle:
+	case EInteractionType::IT_Continuous:
+	default:
+		return Config.InteractionText;
+	}
+}	
 
 // ═══════════════════════════════════════════════════════════════════════
 // HIGHLIGHT

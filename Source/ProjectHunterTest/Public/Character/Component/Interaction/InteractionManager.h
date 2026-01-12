@@ -14,10 +14,14 @@
 // Forward declarations
 class IInteractable;
 class UInteractableManager;
+class UInteractableWidget;
+class UItemInstance;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogInteractionManager, Log, All);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCurrentInteractableChanged, UInteractableManager*, NewInteractable);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGroundItemFocusChanged, int32, GroundItemID);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHoldProgressChanged, float, Progress);
 
 /**
  * Interaction Manager Component
@@ -26,10 +30,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCurrentInteractableChanged, UInte
  * - Manages sub-managers for tracing, validation, pickup, debug
  * - Routes input to appropriate handlers
  * - Maintains focus state
+ * - Manages interaction widget display
  * 
- * FIXES APPLIED:
- * - Added bSystemInitialized guard to prevent double initialization
- * - Uses correct interface function names (OnBeginFocus, OnEndFocus)
+ * WIDGET INTEGRATION:
+ * - Automatically creates and manages UInteractableWidget
+ * - Updates widget state based on interaction state
+ * - Handles hold/mash progress visualization
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PROJECTHUNTERTEST_API UInteractionManager : public UActorComponent
@@ -76,6 +82,38 @@ public:
 	FInteractionDebugManager DebugManager;
 
 	// ═══════════════════════════════════════════════
+	// WIDGET CONFIGURATION
+	// ═══════════════════════════════════════════════
+
+	/** Widget class to spawn for interaction prompts */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")
+	TSubclassOf<UInteractableWidget> InteractionWidgetClass;
+
+	/** Z-Order for the widget (higher = on top) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")
+	int32 WidgetZOrder = 10;
+
+	/** Default action name for ground items */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")
+	FName GroundItemActionName = FName("Pickup");
+
+	/** Default text for ground item pickup */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")
+	FText GroundItemDefaultText = FText::FromString(TEXT("Pick Up"));
+
+	/** Text format for ground items with name (use {0} for item name) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")
+	FText GroundItemNameFormat = FText::FromString(TEXT("Pick Up {0}"));
+
+	// ═══════════════════════════════════════════════
+	// HOLD INTERACTION CONFIG
+	// ═══════════════════════════════════════════════
+
+	/** Threshold for tap vs hold (0.0-1.0 progress) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Hold", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float TapThreshold = 0.3f;
+
+	// ═══════════════════════════════════════════════
 	// QUICK SETTINGS
 	// ═══════════════════════════════════════════════
 
@@ -95,9 +133,21 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Interaction|State")
 	int32 CurrentGroundItemID = -1;
 
+	// ═══════════════════════════════════════════════
+	// EVENTS
+	// ═══════════════════════════════════════════════
+
 	/** Called when CurrentInteractable changes */
 	UPROPERTY(BlueprintAssignable, Category = "Interaction|Events")
 	FOnCurrentInteractableChanged OnCurrentInteractableChanged;
+
+	/** Called when focused ground item changes */
+	UPROPERTY(BlueprintAssignable, Category = "Interaction|Events")
+	FOnGroundItemFocusChanged OnGroundItemFocusChanged;
+
+	/** Called when hold progress changes */
+	UPROPERTY(BlueprintAssignable, Category = "Interaction|Events")
+	FOnHoldProgressChanged OnHoldProgressChanged;
 
 	// ═══════════════════════════════════════════════
 	// PRIMARY INTERFACE
@@ -120,6 +170,18 @@ public:
 	void CheckForInteractables();
 
 	// ═══════════════════════════════════════════════
+	// WIDGET ACCESS
+	// ═══════════════════════════════════════════════
+
+	/** Get the interaction widget (creates if needed) */
+	UFUNCTION(BlueprintPure, Category = "Interaction|Widget")
+	UInteractableWidget* GetInteractionWidget() const { return InteractionWidget; }
+
+	/** Force show/hide widget */
+	UFUNCTION(BlueprintCallable, Category = "Interaction|Widget")
+	void SetWidgetVisible(bool bVisible);
+
+	// ═══════════════════════════════════════════════
 	// GETTERS
 	// ═══════════════════════════════════════════════
 
@@ -138,6 +200,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	bool IsSystemInitialized() const { return bSystemInitialized; }
 
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	bool IsHoldingInteraction() const { return bIsHolding; }
+
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	float GetCurrentHoldProgress() const;
+
 	// ═══════════════════════════════════════════════
 	// DEBUG
 	// ═══════════════════════════════════════════════
@@ -153,6 +221,7 @@ protected:
 	void InitializeInteractionSystem();
 	void CheckPossessionAndInitialize();
 	void InitializeSubManagers();
+	void InitializeWidget();
 	void ApplyQuickSettings();
 
 	// ═══════════════════════════════════════════════
@@ -163,17 +232,55 @@ protected:
 	void PickupGroundItemToInventory(int32 ItemID);
 	void PickupGroundItemAndEquip(int32 ItemID);
 	void UpdateFocusState(TScriptInterface<IInteractable> NewInteractable);
+	void UpdateGroundItemFocus(int32 NewGroundItemID);
 	void UpdateHoldProgress();
 
+	// ═══════════════════════════════════════════════
+	// WIDGET MANAGEMENT
+	// ═══════════════════════════════════════════════
+
+	/** Update widget for actor interactable focus */
+	void UpdateWidgetForActorInteractable(UInteractableManager* Interactable);
+
+	/** Update widget for ground item focus */
+	void UpdateWidgetForGroundItem(int32 GroundItemID);
+
+	/** Hide widget (no focus) */
+	void HideWidget();
+
+	/** Set widget to holding state with progress */
+	void SetWidgetHoldingState(float Progress);
+
+	/** Set widget to completed state */
+	void SetWidgetCompletedState();
+
+	/** Set widget to cancelled state */
+	void SetWidgetCancelledState();
+
+	/** Get item instance for ground item ID */
+	UItemInstance* GetGroundItemInstance(int32 GroundItemID) const;
+
 private:
+	// ═══════════════════════════════════════════════
+	// WIDGET INSTANCE
+	// ═══════════════════════════════════════════════
+
+	/** The interaction widget instance */
+	UPROPERTY()
+	TObjectPtr<UInteractableWidget> InteractionWidget;
+
 	// ═══════════════════════════════════════════════
 	// STATE FLAGS
 	// ═══════════════════════════════════════════════
 
-	/** 
-	 * FIX: Guard flag to prevent double initialization
-	 */
+	/** Guard flag to prevent double initialization */
 	bool bSystemInitialized = false;
+
+	/** Is currently in hold interaction? */
+	bool bIsHolding = false;
+
+	/** Last progress value (to avoid redundant updates) */
+	float LastHoldProgress = -1.0f;
 
 	// ═══════════════════════════════════════════════
 	// TIMERS

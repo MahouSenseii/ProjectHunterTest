@@ -127,6 +127,7 @@ UInstancedStaticMeshComponent* UGroundItemSubsystem::GetOrCreateISMComponent(USt
 
 void UGroundItemSubsystem::ReindexAfterRemoval(UInstancedStaticMeshComponent* ISMComponent, int32 RemovedIndex)
 {
+	
 	for (TPair<int32, FGroundItemISMData>& Pair : ItemISMData)
 	{
 		FGroundItemISMData& Data = Pair.Value;

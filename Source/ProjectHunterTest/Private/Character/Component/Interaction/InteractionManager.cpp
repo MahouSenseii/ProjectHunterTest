@@ -1,10 +1,14 @@
-// Character/Component/InteractionManager.cpp
+// Character/Component/Interaction/InteractionManager.cpp
 
 #include "Character/Component/Interaction/InteractionManager.h"
 #include "Interactable/Interface/Interactable.h"
 #include "Interactable/Component/InteractableManager.h"
+#include "Interactable/Widget/InteractableWidget.h"
 #include "Tower/Subsystem/GroundItemSubsystem.h"
+#include "Item/ItemInstance.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
+#include "Blueprint/UserWidget.h"
 #include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY(LogInteractionManager);
@@ -20,6 +24,8 @@ UInteractionManager::UInteractionManager()
 	
 	CurrentGroundItemID = -1;
 	bSystemInitialized = false;
+	bIsHolding = false;
+	LastHoldProgress = -1.0f;
 }
 
 void UInteractionManager::BeginPlay()
@@ -112,6 +118,13 @@ void UInteractionManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		IInteractable::Execute_OnEndFocus(CurrentInteractable.GetObject(), GetOwner());
 	}
 
+	// Remove widget
+	if (InteractionWidget)
+	{
+		InteractionWidget->RemoveFromParent();
+		InteractionWidget = nullptr;
+	}
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -143,6 +156,11 @@ void UInteractionManager::OnInteractPressed()
 	{
 		// Start hold interaction
 		PickupManager.StartHoldInteraction(CurrentGroundItemID);
+		bIsHolding = true;
+		LastHoldProgress = 0.0f;
+		
+		// Update widget to holding state
+		SetWidgetHoldingState(0.0f);
 		
 		// Start timer for hold progress updates (60 FPS)
 		GetWorld()->GetTimerManager().SetTimer(
@@ -152,6 +170,8 @@ void UInteractionManager::OnInteractPressed()
 			0.016f, // ~60 FPS
 			true    // Loop
 		);
+		
+		UE_LOG(LogInteractionManager, Verbose, TEXT("InteractionManager: Started hold interaction for item %d"), CurrentGroundItemID);
 	}
 }
 
@@ -169,15 +189,28 @@ void UInteractionManager::OnInteractReleased()
 		
 		// Stop the hold progress timer
 		GetWorld()->GetTimerManager().ClearTimer(HoldProgressTimer);
+		bIsHolding = false;
 		
 		// If progress < threshold, treat as tap (pickup to inventory)
-		if (HoldProgress < 0.3f) // Tap threshold
+		if (HoldProgress < TapThreshold)
 		{
 			int32 ItemID = PickupManager.GetCurrentHoldItemID();
 			PickupManager.CancelHoldInteraction();
 			PickupGroundItemToInventory(ItemID);
+			
+			// Widget shows completed briefly, then updates based on new focus
+			SetWidgetCompletedState();
+			
+			UE_LOG(LogInteractionManager, Verbose, TEXT("InteractionManager: Tap pickup for item %d"), ItemID);
 		}
-		// Otherwise, hold will complete naturally (equip)
+		else
+		{
+			// Released before completing hold - cancel
+			PickupManager.CancelHoldInteraction();
+			SetWidgetCancelledState();
+			
+			UE_LOG(LogInteractionManager, Verbose, TEXT("InteractionManager: Hold cancelled at %.1f%%"), HoldProgress * 100.0f);
+		}
 	}
 }
 
@@ -194,7 +227,7 @@ void UInteractionManager::PickupAllNearbyItems()
 	// Pickup all in radius
 	int32 PickedUpCount = PickupManager.PickupAllNearby(CameraLocation);
 
-	UE_LOG(LogTemp, Log, TEXT("InteractionManager: Picked up %d items from area"), PickedUpCount);
+	UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Picked up %d items from area"), PickedUpCount);
 }
 
 void UInteractionManager::CheckForInteractables()
@@ -202,6 +235,12 @@ void UInteractionManager::CheckForInteractables()
 	// Now TraceManager is properly initialized, so we can safely
 	// delegate to TraceManager.IsLocallyControlled()
 	if (!bInteractionEnabled || !IsLocallyControlled())
+	{
+		return;
+	}
+
+	// Don't update focus while holding (would be confusing)
+	if (bIsHolding)
 	{
 		return;
 	}
@@ -238,7 +277,23 @@ void UInteractionManager::CheckForInteractables()
 	// Update ground item state
 	if (NewGroundItemID != CurrentGroundItemID)
 	{
-		CurrentGroundItemID = NewGroundItemID;
+		UpdateGroundItemFocus(NewGroundItemID);
+	}
+
+	// ═══════════════════════════════════════════════
+	// WIDGET UPDATE (Based on current focus)
+	// ═══════════════════════════════════════════════
+	if (CurrentInteractable.GetInterface())
+	{
+		UpdateWidgetForActorInteractable(GetCurrentInteractable());
+	}
+	else if (CurrentGroundItemID != -1)
+	{
+		UpdateWidgetForGroundItem(CurrentGroundItemID);
+	}
+	else
+	{
+		HideWidget();
 	}
 
 	// ═══════════════════════════════════════════════
@@ -278,6 +333,27 @@ void UInteractionManager::CheckForInteractables()
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// WIDGET ACCESS
+// ═══════════════════════════════════════════════════════════════════════
+
+void UInteractionManager::SetWidgetVisible(bool bVisible)
+{
+	if (!InteractionWidget)
+	{
+		return;
+	}
+
+	if (bVisible)
+	{
+		InteractionWidget->Show();
+	}
+	else
+	{
+		InteractionWidget->Hide();
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // GETTERS
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -290,8 +366,17 @@ UInteractableManager* UInteractionManager::GetCurrentInteractable() const
 	return nullptr;
 }
 
+float UInteractionManager::GetCurrentHoldProgress() const
+{
+	if (bIsHolding)
+	{
+		return PickupManager.GetHoldProgress();
+	}
+	return 0.0f;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
-// INTERNAL LOGIC
+// INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════
 
 void UInteractionManager::InitializeInteractionSystem()
@@ -311,6 +396,9 @@ void UInteractionManager::InitializeInteractionSystem()
 
 	// Initialize all sub-managers (lightweight!)
 	InitializeSubManagers();
+
+	// Initialize widget
+	InitializeWidget();
 
 	// Apply quick settings (debug mode)
 	ApplyQuickSettings();
@@ -377,7 +465,46 @@ void UInteractionManager::InitializeSubManagers()
 	// Connect debug manager to trace manager for trace visualization
 	TraceManager.SetDebugManager(&DebugManager);
 
-	UE_LOG(LogTemp, Log, TEXT("InteractionManager: All sub-managers initialized"));
+	UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: All sub-managers initialized"));
+}
+
+void UInteractionManager::InitializeWidget()
+{
+	// Need a valid widget class
+	if (!InteractionWidgetClass)
+	{
+		UE_LOG(LogInteractionManager, Warning, TEXT("InteractionManager: No InteractionWidgetClass set - widget disabled"));
+		return;
+	}
+
+	// Get owning player controller
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn)
+	{
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(OwnerPawn->GetController());
+	if (!PC)
+	{
+		UE_LOG(LogInteractionManager, Warning, TEXT("InteractionManager: No PlayerController - widget deferred"));
+		return;
+	}
+
+	// Create widget
+	InteractionWidget = CreateWidget<UInteractableWidget>(PC, InteractionWidgetClass);
+	if (!InteractionWidget)
+	{
+		UE_LOG(LogInteractionManager, Error, TEXT("InteractionManager: Failed to create interaction widget"));
+		return;
+	}
+
+	// Add to viewport (hidden initially)
+	InteractionWidget->AddToViewport(WidgetZOrder);
+	InteractionWidget->Hide();
+
+	UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Widget initialized (Class: %s)"), 
+		*InteractionWidgetClass->GetName());
 }
 
 void UInteractionManager::ApplyQuickSettings()
@@ -392,6 +519,10 @@ void UInteractionManager::ApplyQuickSettings()
 		DebugManager.DebugMode = EInteractionDebugMode::None;
 	}
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// INTERNAL LOGIC
+// ═══════════════════════════════════════════════════════════════════════
 
 void UInteractionManager::InteractWithActor(AActor* TargetActor)
 {
@@ -449,6 +580,12 @@ void UInteractionManager::PickupGroundItemToInventory(int32 ItemID)
 	{
 		DebugManager.LogGroundItemPickup(ItemID, true, bSuccess);
 	}
+	
+	// Item was picked up, clear current focus
+	if (bSuccess && CurrentGroundItemID == ItemID)
+	{
+		CurrentGroundItemID = -1;
+	}
 }
 
 void UInteractionManager::PickupGroundItemAndEquip(int32 ItemID)
@@ -458,6 +595,12 @@ void UInteractionManager::PickupGroundItemAndEquip(int32 ItemID)
 	if (bDebugEnabled)
 	{
 		DebugManager.LogGroundItemPickup(ItemID, false, bSuccess);
+	}
+	
+	// Item was picked up, clear current focus
+	if (bSuccess && CurrentGroundItemID == ItemID)
+	{
+		CurrentGroundItemID = -1;
 	}
 }
 
@@ -472,7 +615,7 @@ void UInteractionManager::UpdateFocusState(TScriptInterface<IInteractable> NewIn
 	// Update current interactable
 	CurrentInteractable = NewInteractable;
 
-	// Start focus on new interactable (CORRECT: OnBeginFocus, not OnStartFocus)
+	// Start focus on new interactable
 	if (CurrentInteractable.GetInterface())
 	{
 		IInteractable::Execute_OnBeginFocus(CurrentInteractable.GetObject(), GetOwner());
@@ -482,16 +625,154 @@ void UInteractionManager::UpdateFocusState(TScriptInterface<IInteractable> NewIn
 	OnCurrentInteractableChanged.Broadcast(GetCurrentInteractable());
 }
 
+void UInteractionManager::UpdateGroundItemFocus(int32 NewGroundItemID)
+{
+	int32 OldGroundItemID = CurrentGroundItemID;
+	CurrentGroundItemID = NewGroundItemID;
+	
+	// Broadcast change event
+	if (OldGroundItemID != NewGroundItemID)
+	{
+		OnGroundItemFocusChanged.Broadcast(NewGroundItemID);
+	}
+}
+
 void UInteractionManager::UpdateHoldProgress()
 {
 	// Update hold progress via timer (called at 60 FPS)
 	bool bCompleted = PickupManager.UpdateHoldProgress(0.016f);
 	
+	float CurrentProgress = PickupManager.GetHoldProgress();
+	
+	// Update widget progress (only if changed significantly)
+	if (FMath::Abs(CurrentProgress - LastHoldProgress) > 0.005f)
+	{
+		LastHoldProgress = CurrentProgress;
+		SetWidgetHoldingState(CurrentProgress);
+		
+		// Broadcast progress change
+		OnHoldProgressChanged.Broadcast(CurrentProgress);
+	}
+	
 	if (bCompleted)
 	{
-		// Hold completed, stop timer
-		GetWorld()->GetTimerManager().ClearTimer(HoldProgressTimer);
+		// Hold completed - equip the item
+		int32 ItemID = PickupManager.GetCurrentHoldItemID();
 		
-		UE_LOG(LogInteractionManager, Verbose, TEXT("InteractionManager: Hold interaction completed via timer"));
+		// Stop timer
+		GetWorld()->GetTimerManager().ClearTimer(HoldProgressTimer);
+		bIsHolding = false;
+		
+		// Execute equip
+		PickupGroundItemAndEquip(ItemID);
+		
+		// Widget shows completed state
+		SetWidgetCompletedState();
+		
+		UE_LOG(LogInteractionManager, Log, TEXT("InteractionManager: Hold interaction completed - equipped item %d"), ItemID);
 	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// WIDGET MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════
+
+void UInteractionManager::UpdateWidgetForActorInteractable(UInteractableManager* Interactable)
+{
+	if (!InteractionWidget || !Interactable)
+	{
+		return;
+	}
+
+	// Get interaction data from interactable
+	FName ActionName = Interactable->Config.ActionName;
+	FText Description = Interactable->Config.InteractionText;
+
+	// Update widget
+	InteractionWidget->SetInteractionData(ActionName, Description);
+	InteractionWidget->SetWidgetState(EInteractionWidgetState::IWS_Idle);
+	InteractionWidget->Show();
+}
+
+void UInteractionManager::UpdateWidgetForGroundItem(int32 GroundItemID)
+{
+	if (!InteractionWidget || GroundItemID == -1)
+	{
+		return;
+	}
+
+	// Try to get item name
+	FText Description = GroundItemDefaultText;
+	
+	if (UItemInstance* Item = GetGroundItemInstance(GroundItemID))
+	{
+		FText ItemName = Item->GetDisplayName();
+		if (!ItemName.IsEmpty())
+		{
+			// Format: "Pick Up {ItemName}"
+			Description = FText::Format(GroundItemNameFormat, ItemName);
+		}
+	}
+
+	// Update widget
+	InteractionWidget->SetInteractionData(GroundItemActionName, Description);
+	InteractionWidget->SetWidgetState(EInteractionWidgetState::IWS_Idle);
+	InteractionWidget->Show();
+}
+
+void UInteractionManager::HideWidget()
+{
+	if (!InteractionWidget)
+	{
+		return;
+	}
+
+	InteractionWidget->Hide();
+}
+
+void UInteractionManager::SetWidgetHoldingState(float Progress)
+{
+	if (!InteractionWidget)
+	{
+		return;
+	}
+
+	InteractionWidget->SetWidgetState(EInteractionWidgetState::IWS_Holding);
+	InteractionWidget->SetProgress(Progress);
+}
+
+void UInteractionManager::SetWidgetCompletedState()
+{
+	if (!InteractionWidget)
+	{
+		return;
+	}
+
+	InteractionWidget->SetWidgetState(EInteractionWidgetState::IWS_Completed);
+}
+
+void UInteractionManager::SetWidgetCancelledState()
+{
+	if (!InteractionWidget)
+	{
+		return;
+	}
+
+	InteractionWidget->SetWidgetState(EInteractionWidgetState::IWS_Cancelled);
+}
+
+UItemInstance* UInteractionManager::GetGroundItemInstance(int32 GroundItemID) const
+{
+	if (GroundItemID == -1)
+	{
+		return nullptr;
+	}
+
+	UGroundItemSubsystem* Subsystem = GetWorld()->GetSubsystem<UGroundItemSubsystem>();
+	if (!Subsystem)
+	{
+		return nullptr;
+	}
+
+	return Subsystem->GetItemByID(GroundItemID);
 }

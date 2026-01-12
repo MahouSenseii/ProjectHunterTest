@@ -205,6 +205,20 @@ struct FInteractionConfig
 	EInteractionType InteractionType = EInteractionType::IT_Tap;
 
 	// ═══════════════════════════════════════════════
+	// INPUT ACTION (REFACTORED)
+	// ═══════════════════════════════════════════════
+	
+	/**
+	 * Input Action for this interaction
+	 * Widget will query this to get currently bound key
+	 * Example: IA_Interact, IA_PickUp, IA_Open, etc.
+	 * 
+	 * REPLACES: FName ActionName
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
+	TObjectPtr<UInputAction> InputAction = nullptr;
+
+	// ═══════════════════════════════════════════════
 	// HOLD INTERACTION SETTINGS
 	// ═══════════════════════════════════════════════
 	
@@ -265,11 +279,7 @@ struct FInteractionConfig
 	// GENERAL SETTINGS
 	// ═══════════════════════════════════════════════
 	
-	/** Action name for icon lookup */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
-	FName ActionName = FName("Interact");
-
-	/** Display text */
+	/** Display text for basic interactions */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
 	FText InteractionText = FText::FromString("Press To Interact");
 
@@ -279,7 +289,6 @@ struct FInteractionConfig
 
 	FInteractionConfig() = default;
 };
-
 /**
  * Active Interaction Data - Runtime state for ongoing interaction
  */

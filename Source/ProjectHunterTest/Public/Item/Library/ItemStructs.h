@@ -61,7 +61,7 @@ struct FBaseWeaponStats
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
 	float MaxPhysicalDamage = 0.0f;
 
-	// Elemental Damage (Hunter Manga: Fire, Ice, Lightning)
+	// Elemental Damage
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
 	float MinFireDamage = 0.0f;
 
@@ -80,7 +80,7 @@ struct FBaseWeaponStats
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
 	float MaxLightningDamage = 0.0f;
 
-	// Special Damage (Hunter Manga: Light, Corruption)
+	// Special Damage
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
 	float MinLightDamage = 0.0f;
 
@@ -252,11 +252,11 @@ struct FItemDurability
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// RUNE CRAFTING (Hunter Manga Style)
+// RUNE CRAFTING
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Rune socket data (Hunter Manga: Rune Stones for enhancement)
+ * Rune socket data 
  */
 USTRUCT(BlueprintType)
 struct FRuneSocket
@@ -276,7 +276,7 @@ struct FRuneSocket
 };
 
 /**
- * Rune crafting system (Hunter Manga: Enhance items with Rune Stones)
+ * Rune crafting system 
  */
 USTRUCT(BlueprintType)
 struct FRuneCraftingData
@@ -705,8 +705,6 @@ struct FPHItemStats
 /**
  * Base item definition (DataTable row)
  * Contains all static/shared data for an item type
- * 
- * HUNTER MANGA STYLE - Weight-based inventory (no grid)
  */
 USTRUCT(BlueprintType)
 struct FItemBase : public FTableRowBase
@@ -767,10 +765,7 @@ struct FItemBase : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Visual")
 	UMaterialInstance* ItemImage = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Visual")
-	UMaterialInstance* ItemImageRotated = nullptr;
-
+	
 	/** Only for weapons with actor representation */
 	UPROPERTY(EditAnywhere, Category = "Item|Visual", 
 		meta = (EditCondition = "ItemType == EItemType::IT_Weapon", EditConditionHides))
@@ -781,10 +776,10 @@ struct FItemBase : public FTableRowBase
 	TSubclassOf<AActor> WeaponActorClass = nullptr;
 
 	// ═══════════════════════════════════════════════
-	// WEIGHT & STACKING (Hunter Manga Style)
+	// WEIGHT & STACKING
 	// ═══════════════════════════════════════════════
 
-	/** Base weight for single item (Hunter weight limit system) */
+	/** Base weight for single item  */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Weight", meta = (ClampMin = "0.0"))
 	float BaseWeight = 0.1f;
 
@@ -894,7 +889,7 @@ struct FItemBase : public FTableRowBase
 	TArray<FPHAttributeData> UniqueAffixes;
 
 	// ═══════════════════════════════════════════════
-	// CONSUMABLE DATA (Consumables Only)
+	// CONSUMABLE DATA 
 	// ═══════════════════════════════════════════════
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Consumable",
@@ -906,7 +901,7 @@ struct FItemBase : public FTableRowBase
 	float GetCooldown() const { return ConsumableData.Cooldown; }
 
 	// ═══════════════════════════════════════════════
-	// RUNE CRAFTING (Equipment Only - Hunter Manga)
+	// RUNE CRAFTING 
 	// ═══════════════════════════════════════════════
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Runes",
@@ -986,7 +981,6 @@ struct FItemBase : public FTableRowBase
 
 	/**
 	 * Calculate value based on rarity and quantity
-	 * Hunter Manga: Higher grades worth exponentially more
 	 */
 	float GetCalculatedValue(int32 Quantity = 1, EItemRarity InstanceRarity = EItemRarity::IR_None) const
 	{
@@ -1019,7 +1013,6 @@ struct FItemBase : public FTableRowBase
 
 	/**
 	 * Get weight for quantity
-	 * Hunter Manga: Weight-based inventory system
 	 */
 	float GetTotalWeight(int32 Quantity = 1) const
 	{

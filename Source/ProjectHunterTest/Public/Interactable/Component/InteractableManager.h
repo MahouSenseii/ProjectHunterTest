@@ -162,9 +162,6 @@ public:
 	/** Update progress bar on widget [0.0 - 1.0] */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void UpdateProgress(float Progress, bool bIsDepleting = false);
-
-	/** Show/hide progress bar */
-	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void SetProgressBarVisible(bool bVisible);
 
 	// ═══════════════════════════════════════════════
@@ -212,4 +209,7 @@ private:
 
 	/** Update widget text based on interaction type */
 	void UpdateWidgetText();
+
+	/** Get Display Text For Current Interaction Type*/ 
+	FText GetDisplayTextForCurrentType() const;
 };
