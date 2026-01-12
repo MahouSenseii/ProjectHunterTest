@@ -717,18 +717,21 @@ struct FItemBase : public FTableRowBase
 	// IDENTITY
 	// ═══════════════════════════════════════════════
 
+	/** Is this a unique item? (If false, name is auto-generated from affixes) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Identity")
+	bool bIsUnique = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Item|Identity")
 	FName ItemID = NAME_None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Display")
+	/** Only set name for unique items (Grade SS / EX-Rank) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Display", 
+		meta = (EditCondition = "bIsUnique", EditConditionHides))
 	FText ItemName = FText::GetEmpty();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Display", meta = (MultiLine = "true"))
 	FText ItemDescription = FText::GetEmpty();
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Display", meta = (MultiLine = "true"))
-	FText FlavorText = FText::GetEmpty();
-
+	
 	// ═══════════════════════════════════════════════
 	// CLASSIFICATION
 	// ═══════════════════════════════════════════════
@@ -742,10 +745,14 @@ struct FItemBase : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Class")
 	EItemRarity ItemRarity = EItemRarity::IR_GradeF;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Class")
+	/** Only show for equipment types */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Class", 
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	EEquipmentSlot EquipmentSlot = EEquipmentSlot::ES_None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Class")
+	/** Only show for weapons */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Class", 
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon", EditConditionHides))
 	EWeaponHandle WeaponHandle = EWeaponHandle::WH_None;
 
 	// ═══════════════════════════════════════════════
@@ -764,10 +771,13 @@ struct FItemBase : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Visual")
 	UMaterialInstance* ItemImageRotated = nullptr;
 
-	UPROPERTY(EditAnywhere, Category = "Combat")
+	/** Only for weapons with actor representation */
+	UPROPERTY(EditAnywhere, Category = "Item|Visual", 
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon", EditConditionHides))
 	bool bUseWeaponActor = false;
 
-	UPROPERTY(EditAnywhere, Category = "Combat", meta = (EditCondition = "bUseWeaponActor", EditConditionHides))
+	UPROPERTY(EditAnywhere, Category = "Item|Visual", 
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon && bUseWeaponActor", EditConditionHides))
 	TSubclassOf<AActor> WeaponActorClass = nullptr;
 
 	// ═══════════════════════════════════════════════
@@ -778,17 +788,24 @@ struct FItemBase : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Weight", meta = (ClampMin = "0.0"))
 	float BaseWeight = 0.1f;
 
-	/** Scale weight with quantity? (usually true for stackables) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Weight")
-	bool bScaleWeightWithQuantity = true;
-
-	/** Can this item stack? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stacking")
+	/** 
+	 * Can this item stack? 
+	 * NOTE: Weapons, Armor, Accessories are NEVER stackable (unique instances)
+	 * Only Consumables, Materials, Currency can stack
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stacking",
+		meta = (EditCondition = "ItemType != EItemType::IT_Weapon && ItemType != EItemType::IT_Armor && ItemType != EItemType::IT_Accessory", EditConditionHides))
 	bool bStackable = false;
 
-	/** Maximum stack size */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stacking", meta = (EditCondition = "bStackable", ClampMin = "1"))
+	/** Maximum stack size (only for stackable items) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stacking", 
+		meta = (EditCondition = "bStackable && ItemType != EItemType::IT_Weapon && ItemType != EItemType::IT_Armor && ItemType != EItemType::IT_Accessory", EditConditionHides, ClampMin = "1"))
 	int32 MaxStackSize = 1;
+
+	/** Scale weight with quantity? (only relevant for stackables) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Weight",
+		meta = (EditCondition = "bStackable", EditConditionHides))
+	bool bScaleWeightWithQuantity = true;
 
 	// ═══════════════════════════════════════════════
 	// VALUE & ECONOMY
@@ -810,52 +827,61 @@ struct FItemBase : public FTableRowBase
 	// FLAGS
 	// ═══════════════════════════════════════════════
 
-	/** Is this a unique/legendary item? (Grade SS / EX-Rank) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Flags")
-	bool bIsItemUnique = false;
-
-	/** Does this item need to be identified? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Flags")
+	/** Does this item need to be identified? (Only equipment) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Flags",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	bool bCanBeIdentified = true;
 
 	// ═══════════════════════════════════════════════
-	// ATTACHMENT (Equipment)
+	// ATTACHMENT (Equipment Only)
 	// ═══════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Attachment")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Attachment",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	FName AttachmentSocket = NAME_None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Attachment")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Attachment",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	TMap<FName, FName> ContextualSockets;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Attachment")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Attachment",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	FItemAttachmentRules AttachmentRules;
 
 	// ═══════════════════════════════════════════════
-	// BASE STATS (Equipment)
+	// BASE STATS (Equipment Only)
 	// ═══════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stats")
+	/** Only show for weapons */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stats",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon", EditConditionHides))
 	FBaseWeaponStats WeaponStats;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stats")
+	/** Only show for armor */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stats",
+		meta = (EditCondition = "ItemType == EItemType::IT_Armor", EditConditionHides))
 	FBaseArmorStats ArmorStats;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stats")
+	/** Only show for equipment */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Stats",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	FItemStatRequirement StatRequirements;
 
 	// ═══════════════════════════════════════════════
-	// DURABILITY (Equipment)
+	// DURABILITY (Equipment Only)
 	// ═══════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Durability")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Durability",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	float MaxDurability = 100.0f;
 
 	// ═══════════════════════════════════════════════
-	// IMPLICITS (Always present on item)
+	// IMPLICITS (Equipment Only)
 	// ═══════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Affixes")
+	/** Always-present affixes (e.g., "+10 Fire Resistance" on Fire Cloak) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Affixes",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	TArray<FPHAttributeData> ImplicitMods;
 
 	// ═══════════════════════════════════════════════
@@ -863,14 +889,16 @@ struct FItemBase : public FTableRowBase
 	// ═══════════════════════════════════════════════
 
 	/** Fixed affixes for unique items (not randomly generated) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Unique", meta = (EditCondition = "bIsItemUnique"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Unique", 
+		meta = (EditCondition = "bIsUnique", EditConditionHides))
 	TArray<FPHAttributeData> UniqueAffixes;
 
 	// ═══════════════════════════════════════════════
-	// CONSUMABLE DATA
+	// CONSUMABLE DATA (Consumables Only)
 	// ═══════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Consumable")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Consumable",
+		meta = (EditCondition = "ItemType == EItemType::IT_Consumable", EditConditionHides))
 	FConsumableData ConsumableData;
 
 	/** Shortcut accessors for consumable data */
@@ -878,13 +906,15 @@ struct FItemBase : public FTableRowBase
 	float GetCooldown() const { return ConsumableData.Cooldown; }
 
 	// ═══════════════════════════════════════════════
-	// RUNE CRAFTING (Hunter Manga)
+	// RUNE CRAFTING (Equipment Only - Hunter Manga)
 	// ═══════════════════════════════════════════════
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Runes")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Runes",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	int32 MaxRuneSockets = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Runes")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item|Runes",
+		meta = (EditCondition = "ItemType == EItemType::IT_Weapon || ItemType == EItemType::IT_Armor || ItemType == EItemType::IT_Accessory", EditConditionHides))
 	int32 MaxEnhancementLevel = 15;
 
 	// ═══════════════════════════════════════════════
@@ -903,8 +933,18 @@ struct FItemBase : public FTableRowBase
 	{
 		if (!IsValid()) return false;
 		if (BaseWeight < 0.0f) return false;
+		
+		// Equipment should never be stackable
+		if (IsEquippable() && bStackable)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ItemBase: Equipment '%s' has bStackable=true! This is invalid."), *ItemID.ToString());
+			return false;
+		}
+		
+		// Stackable validation
 		if (bStackable && MaxStackSize <= 0) return false;
 		if (!bStackable && MaxStackSize > 1) return false;
+		
 		return true;
 	}
 
@@ -924,6 +964,15 @@ struct FItemBase : public FTableRowBase
 			|| ItemType == EItemType::IT_Armor
 			|| ItemType == EItemType::IT_Accessory;
 	}
+
+	/** Check if this is a consumable */
+	bool IsConsumable() const { return ItemType == EItemType::IT_Consumable; }
+
+	/** Check if this is a material */
+	bool IsMaterial() const { return ItemType == EItemType::IT_Material; }
+
+	/** Check if this is currency */
+	bool IsCurrency() const { return ItemType == EItemType::IT_Currency; }
 
 	/** Get socket name for context */
 	FName GetSocketForContext(FName Context) const

@@ -208,7 +208,7 @@ FText UItemFunctionLibrary::GenerateItemName(
 
 	// Grade SS (EX-Rank): [Preset Unique Name]
 	// Unique items use their base name as the preset unique name
-	if (Rarity == EItemRarity::IR_GradeSS || ItemBase.bIsItemUnique)
+	if (Rarity == EItemRarity::IR_GradeSS || ItemBase.bIsUnique)
 	{
 		return FText::Format(FText::FromString("[{0}]"), ItemBase.ItemName);
 	}

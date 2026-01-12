@@ -26,7 +26,7 @@ FPHItemStats FAffixGenerator::GenerateAffixes(
 	}
 	
 	// Grade SS (EX-Rank): Use unique affixes from base item
-	if (Rarity == EItemRarity::IR_GradeSS || BaseItem.bIsItemUnique)
+	if (Rarity == EItemRarity::IR_GradeSS || BaseItem.bIsUnique)
 	{
 		Stats.Prefixes = BaseItem.UniqueAffixes;
 		for (FPHAttributeData& Affix : Stats.Prefixes)

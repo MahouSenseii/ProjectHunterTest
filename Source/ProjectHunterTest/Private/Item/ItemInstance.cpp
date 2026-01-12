@@ -255,7 +255,7 @@ FText UItemInstance::GetDisplayName()
 	}
 	
 	// Quest items and Grade SS (EX-Rank) use base name
-	if (IsQuestItem() || Rarity == EItemRarity::IR_GradeSS || (IsEquipment() && Base->bIsItemUnique))
+	if (IsQuestItem() || Rarity == EItemRarity::IR_GradeSS || (IsEquipment() && Base->bIsUnique))
 	{
 		// EX-Rank items get special formatting
 		if (Rarity == EItemRarity::IR_GradeSS)
