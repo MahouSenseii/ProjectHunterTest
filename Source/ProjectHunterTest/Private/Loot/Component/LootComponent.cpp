@@ -22,7 +22,8 @@ void ULootComponent::BeginPlay()
 	
 	// Cache subsystem
 	EnsureSubsystem();
-	
+
+		
 	// Validate source
 	if (!SourceID.IsNone() && !IsSourceValid())
 	{
@@ -64,13 +65,8 @@ FLootResultBatch ULootComponent::DropLootAtLocation(
 	FLootSpawnSettings SpawnSettings = DefaultSpawnSettings;
 	SpawnSettings.SpawnLocation = Location;
 	
-	// Build and execute request
+	// Build and execute a request
 	FLootRequest Request = BuildRequest(PlayerLuck, PlayerMagicFind);
-	
-	// ═══════════════════════════════════════════════
-	// FIX: Correct function signature
-	// SpawnSettings already contains Location
-	// ═══════════════════════════════════════════════
 	return CachedLootSubsystem->GenerateAndSpawnLoot(Request, SpawnSettings);
 }
 
@@ -113,10 +109,6 @@ void ULootComponent::SpawnLoot(const FLootResultBatch& Results, FVector Location
 		SpawnSettings.SpawnLocation = Location;
 	}
 	
-	// ═══════════════════════════════════════════════
-	// FIX: Use correct function name and signature
-	// SpawnLootResults doesn't exist - use SpawnLootAtLocation
-	// ═══════════════════════════════════════════════
 	CachedLootSubsystem->SpawnLootAtLocation(Results, SpawnSettings.SpawnLocation, SpawnSettings.ScatterRadius);
 }
 

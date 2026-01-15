@@ -24,6 +24,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FMashProgressEvent, AActor*, Inte
  * - Hold interactions (with progress bar)
  * - Mash interactions (button mashing)
  * - Tap OR Hold (ground items: tap=inventory, hold=equip)
+ * - Camera-facing widgets (always visible from any angle)
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PROJECTHUNTERTEST_API UInteractableManager : public UActorComponent, public IInteractable
@@ -33,9 +34,9 @@ class PROJECTHUNTERTEST_API UInteractableManager : public UActorComponent, publi
 public:
 	UInteractableManager();
 
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	// CONFIGURATION (Set in Blueprint)
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	
 	/** Interaction configuration */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction")
@@ -65,6 +66,28 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget", meta = (EditCondition = "!bUseDesiredSize", ClampMin = "0.5", ClampMax = "4.0"))
 	float ResolutionScale = 2.0f;
 
+	// ─────────────────────────────────────────────────────────────────────
+	// CAMERA-FACING WIDGET SETTINGS
+	// ─────────────────────────────────────────────────────────────────────
+
+	/** Make widget always face the camera? (Prevents disappearing at angles) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget")
+	bool bAlwaysFaceCamera = true;
+
+	/** How often to update widget rotation (seconds). Lower = smoother but more expensive. 0 = only update at key moments */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget", 
+		meta = (EditCondition = "bAlwaysFaceCamera", ClampMin = "0.0", ClampMax = "1.0"))
+	float CameraFacingUpdateRate = 0.05f;
+
+	/** Smooth rotation speed (degrees/second). 0 = instant snap */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Widget", 
+		meta = (EditCondition = "bAlwaysFaceCamera", ClampMin = "0.0", ClampMax = "1000.0"))
+	float RotationSmoothSpeed = 0.0f;
+
+	// ─────────────────────────────────────────────────────────────────────
+	// HIGHLIGHT SETTINGS
+	// ─────────────────────────────────────────────────────────────────────
+
 	/** Meshes to highlight on focus */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Highlight")
 	TArray<UPrimitiveComponent*> MeshesToHighlight;
@@ -83,9 +106,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Highlight")
 	FLinearColor HighlightColor = FLinearColor::Yellow;
 
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	// EVENTS (Blueprint implementable)
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	
 	/** Called when tap interacted with */
 	UPROPERTY(BlueprintAssignable, Category = "Interaction|Events")
@@ -119,9 +142,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Interaction|Events")
 	FInteractionEvent OnFocusEnd;
 
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	// INTERACTABLE INTERFACE IMPLEMENTATION
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	
 	virtual void OnInteract_Implementation(AActor* Interactor) override;
 	virtual bool CanInteract_Implementation(AActor* Interactor) const override;
@@ -155,18 +178,18 @@ public:
 	virtual UObject* GetTooltipData_Implementation() const override;
 	virtual FVector GetTooltipWorldLocation_Implementation() const override;
 
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	// PROGRESS BAR SUPPORT (for hold/mash interactions)
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	
 	/** Update progress bar on widget [0.0 - 1.0] */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void UpdateProgress(float Progress, bool bIsDepleting = false);
 	void SetProgressBarVisible(bool bVisible);
 
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	// BLUEPRINT CALLABLE
-	// ═══════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
 	
 	/** Enable/disable interaction */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
@@ -190,19 +213,29 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	EInteractionType GetCurrentInteractionType() const { return Config.InteractionType; }
 
+	/** Enable/disable camera facing at runtime */
+	UFUNCTION(BlueprintCallable, Category = "Interaction|Widget")
+	void SetCameraFacingEnabled(bool bEnabled);
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	// ═══════════════════════════════════════════════════════════════════════
+	// WIDGET MANAGEMENT
+	// ═══════════════════════════════════════════════════════════════════════
+
 	/** Widget component (created in BeginPlay) */
 	UPROPERTY()
 	UWidgetComponent* WidgetComponent = nullptr;
 
-	/** Auto-find meshes to highlight */
-	void AutoFindMeshes();
+	/** Current interactor (for camera-facing calculations) */
+	UPROPERTY()
+	AActor* CurrentInteractor = nullptr;
 
-	/** Apply highlight */
-	void ApplyHighlight(bool bHighlight);
+	/** Timer handle for camera-facing updates */
+	FTimerHandle CameraFacingTimerHandle;
 
 	/** Create and setup widget component */
 	void CreateWidgetComponent();
@@ -212,4 +245,43 @@ private:
 
 	/** Get Display Text For Current Interaction Type*/ 
 	FText GetDisplayTextForCurrentType() const;
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// CAMERA-FACING LOGIC (SINGLE RESPONSIBILITY: Widget rotation)
+	// ═══════════════════════════════════════════════════════════════════════
+
+	/** 
+	 * Update widget rotation to face interactor's camera
+	 * @param Interactor - Actor to face towards
+	 * @param DeltaTime - Time delta for smooth rotation (0 for instant)
+	 */
+	void UpdateWidgetRotationToFaceCamera(AActor* Interactor, float DeltaTime = 0.0f);
+
+	/** 
+	 * Get camera location and rotation for the given actor
+	 * @param Interactor - Actor to get camera from
+	 * @param OutCameraLocation - Camera world location
+	 * @param OutCameraRotation - Camera world rotation
+	 * @return True if camera found
+	 */
+	bool GetInteractorCamera(AActor* Interactor, FVector& OutCameraLocation, FRotator& OutCameraRotation) const;
+
+	/** Start camera-facing update timer */
+	void StartCameraFacingUpdates();
+
+	/** Stop camera-facing update timer */
+	void StopCameraFacingUpdates();
+
+	/** Timer callback for continuous camera-facing updates */
+	void UpdateCameraFacingTimer();
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// MESH MANAGEMENT
+	// ═══════════════════════════════════════════════════════════════════════
+
+	/** Auto-find meshes to highlight */
+	void AutoFindMeshes();
+
+	/** Apply highlight */
+	void ApplyHighlight(bool bHighlight);
 };

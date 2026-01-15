@@ -89,6 +89,32 @@ struct FChestVisualConfig
 };
 
 /**
+ * FChestCollisionConfig - Collision settings
+ * SINGLE RESPONSIBILITY: Collision behavior only
+ */
+USTRUCT(BlueprintType)
+struct FChestCollisionConfig
+{
+	GENERATED_BODY()
+
+	/** Block player movement? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
+	bool bBlockPlayer = true;
+
+	/** Block Interactable trace channel? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
+	bool bBlockInteractable = true;
+
+	/** Block camera? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
+	bool bBlockCamera = true;
+
+	/** Generate overlap events? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
+	bool bGenerateOverlapEvents = false;
+};
+
+/**
  * FChestAnimationConfig - Animation settings
  * SINGLE RESPONSIBILITY: Animation behavior only
  */
@@ -220,7 +246,7 @@ struct FChestSpawnConfig
  *   1. Place chest in level
  *   2. Configure LootComponent.SourceID (e.g., "Chest_Common")
  *   3. Choose mesh type (static or skeletal) in VisualConfig
- *   4. Configure animation, feedback, respawn settings
+ *   4. Configure collision, animation, feedback, respawn settings
  *   5. Player interacts → loot generates and spawns
  */
 UCLASS()
@@ -232,6 +258,12 @@ public:
 	ALootChest();
 
 	virtual void BeginPlay() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+	
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 	// NOTE: No Tick() - uses timer-based animation instead
 
 	// ═══════════════════════════════════════════════
@@ -268,6 +300,10 @@ public:
 	/** Visual appearance settings */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Visuals")
 	FChestVisualConfig VisualConfig;
+
+	/** Collision settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Collision")
+	FChestCollisionConfig CollisionConfig;
 
 	/** Animation settings */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loot Chest|Animation")
@@ -389,8 +425,11 @@ protected:
 	void SetupVisuals();
 	void SetupLootComponent();
 
-	/** Configure mesh component visibility based on bUseStaticMesh */
-	void ConfigureMeshVisibility();
+	/** Configure mesh component visibility and collision based on settings */
+	void ConfigureMeshVisibilityAndCollision();
+
+	/** Apply collision settings to active mesh component */
+	void ApplyCollisionSettings();
 
 	// ═══════════════════════════════════════════════
 	// INTERACTION CALLBACKS

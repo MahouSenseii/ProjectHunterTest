@@ -43,6 +43,7 @@ public:
 	 * Interact input handler
 	 * Routes to InteractionManager - that's it!
 	 */
+	UFUNCTION()
 	void Interact(const FInputActionValue& Value);
 
 	/**

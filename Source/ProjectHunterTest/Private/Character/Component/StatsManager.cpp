@@ -499,6 +499,7 @@ float UStatsManager::GetStaminaPercent() const
 	return Max > 0.0f ? GetStamina() / Max : 0.0f;
 }
 
+
 /* ═══════════════════════════════════════════════════════════════════════ */
 /* GENERIC ATTRIBUTE ACCESS                                                */
 /* ═══════════════════════════════════════════════════════════════════════ */
