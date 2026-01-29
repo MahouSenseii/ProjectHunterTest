@@ -632,7 +632,7 @@ void ALootChest::GenerateAndSpawnLoot(AActor* Opener)
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ANIMATION (Timer-based - OPTIMIZATION: No wasteful Tick!)
+// ANIMATION 
 // ═══════════════════════════════════════════════════════════════════════
 
 float ALootChest::GetAnimationDuration() const
@@ -656,7 +656,7 @@ void ALootChest::StartOpenAnimation()
 	// Start animation based on mesh type
 	if (!VisualConfig.bUseStaticMesh)
 	{
-		PlaySkeletalAnimation(false); // Forward
+		PlaySkeletalAnimation(false);
 	}
 
 	// Set timer for completion callback
@@ -738,7 +738,7 @@ void ALootChest::PlaySkeletalAnimation(bool bReverse)
 	Skeletal_ChestMesh->PlayAnimation(VisualConfig.OpenAnimation, false);
 	Skeletal_ChestMesh->SetPlayRate(PlayRate);
 	Skeletal_ChestMesh->SetPosition(StartPosition);
-
+	
 	UE_LOG(LogLootChest, Verbose, TEXT("%s: Playing skeletal animation (Rate: %.2f, Start: %.2f, Reverse: %s)"),
 		*GetName(), PlayRate, StartPosition, bReverse ? TEXT("Yes") : TEXT("No"));
 }

@@ -8,6 +8,7 @@
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
+
 DEFINE_LOG_CATEGORY(LogInteractionValidatorManager);
 
 FInteractionValidatorManager::FInteractionValidatorManager()
@@ -67,7 +68,8 @@ bool FInteractionValidatorManager::ValidateActorInteraction(AActor* TargetActor,
 	// Validate line of sight (optional)
 	if (bRequireLineOfSight)
 	{
-		if (!HasLineOfSight(ClientLocation, TargetLocation, OwnerActor))
+		// Pass both source and target actors for proper line of sight validation
+		if (!HasLineOfSight(ClientLocation, TargetLocation, OwnerActor, TargetActor))
 		{
 			LogValidationFailure("Line of sight check failed", ClientLocation, TargetLocation);
 			return false;
@@ -159,7 +161,7 @@ bool FInteractionValidatorManager::ValidateDistance(FVector LocationA, FVector L
 	return ActualDistance <= AllowedDistance;
 }
 
-bool FInteractionValidatorManager::HasLineOfSight(FVector Start, FVector End, AActor* IgnoreActor)
+bool FInteractionValidatorManager::HasLineOfSight(FVector Start, FVector End, AActor* SourceActor, AActor* TargetActor)
 {
 	if (!WorldContext)
 	{
@@ -168,10 +170,13 @@ bool FInteractionValidatorManager::HasLineOfSight(FVector Start, FVector End, AA
 
 	// Setup trace params
 	FCollisionQueryParams QueryParams;
-	if (IgnoreActor)
+	
+	// Ignore source actor (typically the player)
+	if (SourceActor)
 	{
-		QueryParams.AddIgnoredActor(IgnoreActor);
+		QueryParams.AddIgnoredActor(SourceActor);
 	}
+	
 	QueryParams.bTraceComplex = false;
 
 	// Perform line trace
@@ -184,8 +189,21 @@ bool FInteractionValidatorManager::HasLineOfSight(FVector Start, FVector End, AA
 		QueryParams
 	);
 
-	// Clear line of sight if nothing hit
-	return !bHit;
+	// No hit means clear line of sight
+	if (!bHit)
+	{
+		return true;
+	}
+
+	// If we hit something, check if it's the target actor we're trying to interact with
+	// Hitting the target actor itself (or its components) counts as valid line of sight
+	if (TargetActor && HitResult.GetActor() == TargetActor)
+	{
+		return true;
+	}
+
+	// Hit something else that's blocking line of sight
+	return false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

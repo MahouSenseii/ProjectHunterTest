@@ -413,7 +413,6 @@ struct FLootEntry
 /**
  * FLootTable - DataTable row containing loot entries
  * 
- * SINGLE RESPONSIBILITY: Define a collection of possible drops
  */
 USTRUCT(BlueprintType)
 struct FLootTable : public FTableRowBase

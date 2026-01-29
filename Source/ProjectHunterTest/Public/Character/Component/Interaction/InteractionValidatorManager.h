@@ -91,8 +91,13 @@ public:
 
 	/**
 	 * Check line of sight between two points
+	 * @param Start - Start location (typically player/camera location)
+	 * @param End - End location (typically target location)
+	 * @param SourceActor - Actor to ignore at start (typically player)
+	 * @param TargetActor - Target actor we're checking line of sight TO (hitting this counts as valid LOS)
+	 * @return True if clear line of sight exists (or if we hit the target actor itself)
 	 */
-	bool HasLineOfSight(FVector Start, FVector End, AActor* IgnoreActor = nullptr);
+	bool HasLineOfSight(FVector Start, FVector End, AActor* SourceActor = nullptr, AActor* TargetActor = nullptr);
 
 	/**
 	 * Calculate dynamic latency buffer based on player ping

@@ -19,10 +19,10 @@ enum class EAffixes : uint8
 	AF_Prefix     UMETA(DisplayName = "Prefix"),
 	AF_Suffix     UMETA(DisplayName = "Suffix"),
 	AF_Implicit   UMETA(DisplayName = "Implicit"),   // Built into item
-	AF_Crafted    UMETA(DisplayName = "Crafted"),    // Hunter-crafted
+	AF_Crafted    UMETA(DisplayName = "Crafted"),    // Hunter-crafted (Runes)
 	AF_Corrupted  UMETA(DisplayName = "Corrupted"),  // Chaos/corruption mods
 	AF_Enchant    UMETA(DisplayName = "Enchant"),    // Special enchantments
-	AF_Skill      UMETA(DisplayName = "Skill")       // Hunter Manga: Items with active skills
+	AF_Skill      UMETA(DisplayName = "Skill")       // Items with active skills
 };
 
 /**

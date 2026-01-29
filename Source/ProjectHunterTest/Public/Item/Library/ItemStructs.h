@@ -47,63 +47,106 @@ struct FItemAttachmentRules
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Base weapon damage stats (PoE2 style min-max ranges)
+ * Base weapon damage stats 
  */
 USTRUCT(BlueprintType)
 struct FBaseWeaponStats
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
 
-	// Physical Damage
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MinPhysicalDamage = 0.0f;
+    // Physical Damage
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MinPhysicalDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MaxPhysicalDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MaxPhysicalDamage = 0.0f;
 
-	// Elemental Damage
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MinFireDamage = 0.0f;
+    // Elemental Damage
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MinFireDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MaxFireDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MaxFireDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MinIceDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MinIceDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MaxIceDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MaxIceDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MinLightningDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MinLightningDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MaxLightningDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MaxLightningDamage = 0.0f;
 
-	// Special Damage
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MinLightDamage = 0.0f;
+    // Special Damage
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MinLightDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MaxLightDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MaxLightDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MinCorruptionDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MinCorruptionDamage = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage")
-	float MaxCorruptionDamage = 0.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Damage", meta = (ClampMin = "0.0"))
+    float MaxCorruptionDamage = 0.0f;
 
-	// Attack Stats
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attack")
-	float AttackSpeed = 1.0f;
+    // Attack Stats
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attack", meta = (ClampMin = "0.1", ClampMax = "10.0"))
+    float AttackSpeed = 1.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attack")
-	float CriticalStrikeChance = 5.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attack", meta = (ClampMin = "0.0", ClampMax = "100.0"))
+    float CriticalStrikeChance = 5.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attack")
-	float Range = 1.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attack", meta = (ClampMin = "0.1"))
+    float Range = 1.0f;
 
-	FBaseWeaponStats() = default;
+    FBaseWeaponStats() = default;
+
+    // ═══════════════════════════════════════════════
+    // VALIDATION (Editor Only)
+    // ═══════════════════════════════════════════════
+
+#if WITH_EDITOR
+    /**
+     * Called when property is edited in DataTable
+     * Automatically clamps Max to be >= Min
+     */
+    void OnDataTableChanged(const UDataTable* InDataTable, const FName InRowName)
+    {
+        ValidateMinMaxRanges();
+    }
+
+    void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+    {
+        ValidateMinMaxRanges();
+    }
+
+private:
+    void ValidateMinMaxRanges()
+    {
+        // Clamp Max values to be >= Min values
+        if (MaxPhysicalDamage < MinPhysicalDamage)
+            MaxPhysicalDamage = MinPhysicalDamage;
+        
+        if (MaxFireDamage < MinFireDamage)
+            MaxFireDamage = MinFireDamage;
+        
+        if (MaxIceDamage < MinIceDamage)
+            MaxIceDamage = MinIceDamage;
+        
+        if (MaxLightningDamage < MinLightningDamage)
+            MaxLightningDamage = MinLightningDamage;
+        
+        if (MaxLightDamage < MinLightDamage)
+            MaxLightDamage = MinLightDamage;
+        
+        if (MaxCorruptionDamage < MinCorruptionDamage)
+            MaxCorruptionDamage = MinCorruptionDamage;
+    }
+#endif
 };
 
 // ═══════════════════════════════════════════════════════════════════════

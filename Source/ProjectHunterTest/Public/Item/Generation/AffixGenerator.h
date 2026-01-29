@@ -9,20 +9,6 @@
 
 /**
  * Affix Generator - Handles all affix generation logic
- * PoE2-Style: Directly uses FPHAttributeData rows from DT_Affixes
- * 
- * SINGLE RESPONSIBILITY: Generate affixes for items
- * - Weighted affix selection from DataTable
- * - Value rolling within min-max range
- * - Item level filtering
- * - Rarity-based affix count
- * - CORRUPTION: Roll negative affixes (ERankPoints < 0)
- * 
- * CORRUPTION SYSTEM:
- * - Corruption = negative affixes that hurt the player
- * - Uses ERankPoints to distinguish positive vs negative
- * - CorruptionChance determines probability per affix
- * - bForceOneCorrupted guarantees at least one negative affix
  */
 USTRUCT(BlueprintType)
 struct PROJECTHUNTERTEST_API FAffixGenerator
@@ -31,12 +17,16 @@ struct PROJECTHUNTERTEST_API FAffixGenerator
 
 public:
 	// ═══════════════════════════════════════════════
-	// CONFIGURATION
+	// CONFIGURATION - SEPARATE DATATABLE PATHS
 	// ═══════════════════════════════════════════════
 
-	/** Path to affix DataTable (DT_Affixes) */
+	/** Path to PREFIX affix DataTable (DT_Prefixes) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Affix Generator")
-	FSoftObjectPath AffixDataTablePath = FSoftObjectPath(TEXT("/Game/Data/Items/DT_Affixes"));
+	FSoftObjectPath PrefixDataTablePath = FSoftObjectPath(TEXT("/Game/Data/Items/DT_Prefixes"));
+
+	/** Path to SUFFIX affix DataTable (DT_Suffixes) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Affix Generator")
+	FSoftObjectPath SuffixDataTablePath = FSoftObjectPath(TEXT("/Game/Data/Items/DT_Suffixes"));
 
 	/** Default weight for affixes without explicit weight */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Affix Generator")
@@ -51,10 +41,9 @@ public:
 	 * @param BaseItem - Base item data
 	 * @param ItemLevel - Item level (1-100)
 	 * @param Rarity - Item rarity (determines affix count)
-	 * @param Seed - Random seed for deterministic generation
-	 * @param CorruptionChance - Chance for each affix to be corrupted (0.0 - 1.0)
+	 * @param Seed - Random seed for generation
+	 * @param CorruptionChance - Chance (0-1) for each affix to be corrupted
 	 * @param bForceOneCorrupted - Force at least one corrupted affix
-	 * @return Generated stats with affixes
 	 */
 	FPHItemStats GenerateAffixes(
 		const FItemBase& BaseItem,
@@ -65,27 +54,12 @@ public:
 		bool bForceOneCorrupted = false) const;
 
 	/**
-	 * Generate affixes with custom affix counts (no corruption)
-	 * @param BaseItem - Base item data
-	 * @param ItemLevel - Item level
-	 * @param NumPrefixes - Number of prefixes to roll
-	 * @param NumSuffixes - Number of suffixes to roll
-	 * @param Seed - Random seed
-	 * @return Generated stats with affixes
-	 */
-	FPHItemStats GenerateAffixesCustom(
-		const FItemBase& BaseItem,
-		int32 ItemLevel,
-		int32 NumPrefixes,
-		int32 NumSuffixes,
-		int32 Seed) const;
-
-	// ═══════════════════════════════════════════════
-	// AFFIX COUNT HELPERS
-	// ═══════════════════════════════════════════════
-
-	/**
-	 * Get affix counts for rarity (Hunter Manga F-SS grades)
+	 * Get affix counts based on rarity
+	 * @param Rarity - Item rarity
+	 * @param OutMinPrefixes - Min prefix count
+	 * @param OutMaxPrefixes - Max prefix count
+	 * @param OutMinSuffixes - Min suffix count
+	 * @param OutMaxSuffixes - Max suffix count
 	 */
 	static void GetAffixCountByRarity(
 		EItemRarity Rarity,
@@ -95,21 +69,23 @@ public:
 		int32& OutMaxSuffixes);
 
 	// ═══════════════════════════════════════════════
-	// DATATABLE ACCESS
+	// DATATABLE ACCESS - SINGLE RESPONSIBILITY
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Get affix DataTable (lazy loaded with attempt tracking)
+	 * Get the appropriate DataTable for the given affix type
+	 * @param AffixType - Prefix or Suffix
+	 * @return DataTable pointer or nullptr if not found
 	 */
-	UDataTable* GetAffixDataTable() const;
+	UDataTable* GetAffixDataTable(EAffixes AffixType) const;
 
 private:
 	// ═══════════════════════════════════════════════
-	// AFFIX ROLLING (Internal)
+	// INTERNAL GENERATION - SINGLE RESPONSIBILITY
 	// ═══════════════════════════════════════════════
 
 	/**
-	 * Roll affixes with corruption consideration
+	 * Roll affixes with corruption support
 	 * @param AffixType - Prefix or Suffix
 	 * @param Count - Number of affixes to roll
 	 * @param ItemLevel - Item level for filtering
@@ -133,6 +109,7 @@ private:
 
 	/**
 	 * Build available affix pool filtered by corruption
+	 * @param AffixType - Prefix or Suffix (routes to correct DataTable)
 	 * @param bCorruptedOnly - If true, only return negative affixes
 	 */
 	TArray<FPHAttributeData*> BuildAffixPoolByCorruption(
@@ -158,12 +135,34 @@ private:
 		FRandomStream& RandStream) const;
 
 	// ═══════════════════════════════════════════════
-	// CACHED DATA
+	// LAZY-LOADED CACHED DATA - OPTIMIZATION
 	// ═══════════════════════════════════════════════
 
-	/** Cached affix DataTable */
-	mutable UDataTable* CachedAffixTable = nullptr;
+	/** Cached PREFIX DataTable (lazy-loaded) */
+	mutable UDataTable* CachedPrefixTable = nullptr;
 	
-	/** Track if we've attempted to load (prevents repeated failures) */
-	mutable bool bLoadAttempted = false;
+	/** Cached SUFFIX DataTable (lazy-loaded) */
+	mutable UDataTable* CachedSuffixTable = nullptr;
+	
+	/** Track if we've attempted to load prefixes (prevents repeated failures) */
+	mutable bool bPrefixLoadAttempted = false;
+	
+	/** Track if we've attempted to load suffixes (prevents repeated failures) */
+	mutable bool bSuffixLoadAttempted = false;
+
+	// ═══════════════════════════════════════════════
+	// INTERNAL HELPERS - SINGLE RESPONSIBILITY
+	// ═══════════════════════════════════════════════
+
+	/**
+	 * Load and cache PREFIX DataTable
+	 * SINGLE RESPONSIBILITY: Load PREFIX table only
+	 */
+	UDataTable* LoadPrefixDataTable() const;
+
+	/**
+	 * Load and cache SUFFIX DataTable
+	 * SINGLE RESPONSIBILITY: Load SUFFIX table only
+	 */
+	UDataTable* LoadSuffixDataTable() const;
 };
